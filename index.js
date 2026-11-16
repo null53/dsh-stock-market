@@ -3538,10 +3538,7 @@ async function createMarketService({ store, knowledge, getLlm, config, log }) {
     const retrieved = knowledge.retrieve(`${q} ${context.name ?? ""}`);
     const liveText = await liveContextText().catch(() => "");
     const text2 = await streamAnswer(llm, {
-      provider: config.provider,
-      model: config.model,
-      maxTokens: config.maxTokens,
-      reasoning: config.reasoning,
+      ...currentCall(),
       system: buildSystemPrompt(knowledge),
       user: buildUserMessage({ contextText: [describeContext(context), liveText].filter(Boolean).join("\n\n"), question: q, history: foldHistory(record.messages), retrieved }),
       signal,
@@ -3800,10 +3797,7 @@ ${liveState.lessons.text}` : "";
 （资金规模：维持、加大、减小还是暂停，以及理由；下一阶段重点练习什么）`;
     const retrieved = knowledge.retrieve(`复盘 期望值 止损 头寸 ${stats.byMistake ? Object.keys(stats.byMistake).join(" ") : ""}`);
     const text2 = await streamAnswer(llm, {
-      provider: config.provider,
-      model: config.model,
-      maxTokens: config.maxTokens,
-      reasoning: config.reasoning,
+      ...currentCall(),
       system: buildSystemPrompt(knowledge),
       user: buildUserMessage({ contextText: data + previous, question, history: "", retrieved }),
       signal,
@@ -3816,6 +3810,73 @@ ${liveState.lessons.text}` : "";
   }
   function knowledgeSearch(query) {
     return knowledge.retrieve(String(query ?? ""), { k: 5, budget: 9e3 });
+  }
+  const aiSettings = await store.load("ai-settings", () => ({ provider: null, model: null, reasoning: null }));
+  const defaultModel = () => ({ provider: config.provider, model: config.model, reasoning: config.reasoning ?? "auto" });
+  function currentModel() {
+    const d = defaultModel();
+    const custom = aiSettings.provider !== null && aiSettings.model !== null;
+    return {
+      provider: custom ? aiSettings.provider : d.provider,
+      model: custom ? aiSettings.model : d.model,
+      reasoning: custom ? aiSettings.reasoning ?? "auto" : d.reasoning,
+      custom,
+      defaults: d
+    };
+  }
+  const currentCall = () => {
+    const m = currentModel();
+    return { provider: m.provider, model: m.model, maxTokens: config.maxTokens, reasoning: m.reasoning };
+  };
+  const within = (promise, ms) => Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), ms))]);
+  let modelsCache = null;
+  async function aiModels({ refresh = false } = {}) {
+    const llm = getLlm();
+    if (llm === void 0) throw new ServiceError("ai.unavailable", {}, 503);
+    if (!refresh && modelsCache && Date.now() - modelsCache.at < 6e5) return { ...modelsCache.data, current: currentModel() };
+    const providers = typeof llm.listProviders === "function" ? llm.listProviders() : [];
+    const groups = await Promise.all(providers.map(async (p) => {
+      let list5 = [];
+      try {
+        list5 = typeof llm.listModels === "function" ? await within(llm.listModels(p.id), 8e3) : [];
+      } catch (error) {
+        log.debug(`读取 ${p.id} 的模型列表失败`, error);
+        return [];
+      }
+      const infos = await Promise.all(list5.map((m) => typeof llm.resolveModelInfo === "function" ? within(llm.resolveModelInfo(p.id, m.id), 8e3).catch(() => null) : null));
+      return list5.map((m, i) => ({
+        provider: p.id,
+        providerName: p.name,
+        id: m.id,
+        name: m.name,
+        description: m.description ?? null,
+        efforts: (infos[i]?.reasoning?.efforts ?? []).map((e) => ({ id: e.id, name: e.name, description: e.description ?? null })),
+        defaultEffort: infos[i]?.reasoning?.defaultEffort ?? null
+      }));
+    }));
+    const data = { providers: providers.map((p) => ({ id: p.id, name: p.name })), models: groups.flat() };
+    modelsCache = { at: Date.now(), data };
+    return { ...data, current: currentModel() };
+  }
+  async function setAiModel({ provider, model, reasoning, reset } = {}) {
+    if (reset) {
+      Object.assign(aiSettings, { provider: null, model: null, reasoning: null });
+    } else {
+      if (typeof provider !== "string" || typeof model !== "string" || provider === "" || model === "") throw new ServiceError("ai.badModel", { model: String(model ?? "") });
+      const effort = reasoning === void 0 || reasoning === null || reasoning === "" ? "auto" : String(reasoning);
+      const llm = getLlm();
+      if (llm && typeof llm.listProviders === "function" && !llm.listProviders().some((p) => p.id === provider)) {
+        throw new ServiceError("ai.badModel", { model: `${provider}/${model}` });
+      }
+      if (effort !== "auto" && llm && typeof llm.resolveModelInfo === "function") {
+        const info = await within(llm.resolveModelInfo(provider, model), 8e3).catch(() => null);
+        const ids = info?.reasoning?.efforts?.map((e) => e.id);
+        if (ids && !ids.includes(effort)) throw new ServiceError("ai.badReasoning", { reasoning: effort });
+      }
+      Object.assign(aiSettings, { provider, model, reasoning: effort });
+    }
+    store.save("ai-settings", aiSettings);
+    return currentModel();
   }
   let updateState = { latest: null, checkedAt: 0, at: null };
   let updatePending = null;
@@ -3928,7 +3989,9 @@ ${liveState.lessons.text}` : "";
     liveContextText,
     knowledgeSearch,
     updateInfo,
-    modelInfo: () => ({ provider: config.provider, model: config.model, reasoning: config.reasoning ?? "auto" }),
+    modelInfo: currentModel,
+    aiModels,
+    setAiModel,
     knowledgeInfo: () => ({ dir: knowledge.dir, sections: knowledge.sections, liteChars: knowledge.lite.length }),
     sourceStatus: () => status(),
     aiReady: () => getLlm() !== void 0
@@ -3937,7 +4000,7 @@ ${liveState.lessons.text}` : "";
 
 // src/host/routes.js
 var API_PATH = "/stock-market/api";
-var VERSION = true ? "0.6.3" : "dev";
+var VERSION = true ? "0.6.4" : "dev";
 var MAX_BODY = 256 * 1024;
 function sendJson(res, status2, body) {
   res.statusCode = status2;
@@ -4076,6 +4139,8 @@ function registerRoutes(ctx, ready, log) {
             return sendJson(res, 200, service.screenStatus(q.preset));
           case "chat/history":
             return sendJson(res, 200, await service.chatHistory(q.symbol));
+          case "ai/models":
+            return sendJson(res, 200, await service.aiModels({ refresh: q.refresh === "1" }));
           case "live":
             return sendJson(res, 200, await service.live());
           case "live/plan-trade":
@@ -4103,6 +4168,8 @@ function registerRoutes(ctx, ready, log) {
             return sendJson(res, 200, service.startScreen(body.preset, { force: body.force === true }));
           case "chat":
             return streamSse(res, (opts) => service.chat(body, opts), log);
+          case "ai/model":
+            return sendJson(res, 200, await service.setAiModel(body));
           case "live/preview":
             return sendJson(res, 200, service.livePlanPreview(body.profile));
           case "live/adopt":

@@ -1,6 +1,6 @@
 {
   "name": "@local/dsh-stock-market",
-  "version": "0.6.3",
+  "version": "0.6.4",
   "private": true,
   "type": "module",
   "description": "左侧栏「市场」：A股、ETF、港美股与场外基金行情，海龟量化信号、模拟盘、实盘跟踪、规则选股、提醒，以及内置交易规则库的 AI 顾问。",
