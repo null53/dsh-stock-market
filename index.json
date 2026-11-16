@@ -19,12 +19,11 @@
         "zh": "A 股、ETF、港美股与场外基金行情，海龟量化信号、模拟盘、实盘跟踪、规则选股、提醒和 AI 顾问。",
         "en": "China A-share, ETF, HK/US and mutual fund quotes with Turtle-style signals, paper and live tracking, screeners, alerts and an AI advisor."
       },
-      "icon": "plugin/icon.svg",
+      "icon": "icon.svg",
       "author": "null53",
       "homepage": "https://github.com/null53/dsh-stock-market",
       "repository": {
-        "url": "https://github.com/null53/dsh-stock-market",
-        "directory": "plugin"
+        "url": "https://github.com/null53/dsh-stock-market"
       },
       "metadata": {
         "keywords": [
@@ -43,13 +42,12 @@
       },
       "versions": [
         {
-          "version": "0.6.0",
-          "publishTimestamp": 1794822018,
+          "version": "0.6.1",
+          "publishTimestamp": 1794822613,
           "source": {
             "type": "git",
             "url": "https://github.com/null53/dsh-stock-market",
-            "commit": "1ffc4f70302576d7ae007f4c6b441d4540d69620",
-            "path": "plugin"
+            "commit": "3ca2bbd1fcfced2b4252242f6c49f35b1160241c"
           }
         }
       ]
