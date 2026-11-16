@@ -42,6 +42,15 @@
       },
       "versions": [
         {
+          "version": "0.9.0",
+          "publishTimestamp": 1794842037,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/null53/dsh-stock-market",
+            "commit": "7e433b409781f2d1c682168240e77fc6f993ae53"
+          }
+        },
+        {
           "version": "0.8.1",
           "publishTimestamp": 1794840442,
           "source": {
