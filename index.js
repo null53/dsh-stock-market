@@ -2812,17 +2812,19 @@ function pickReasoningEffort(reasoning, efforts) {
   if (!reasoning || reasoning === "auto") return void 0;
   return efforts.includes(reasoning) ? reasoning : void 0;
 }
-async function streamAnswer(llm, { provider, model, maxTokens, reasoning, system, user, signal, onDelta, onThinking }) {
+var MAX_CONTINUATIONS = 2;
+async function streamOnce(llm, { provider, model, maxTokens, reasoning, system, user, signal, onDelta, onThinking }) {
   const messages = [{ role: "user", content: [{ type: "text", text: user }] }];
+  const limit2 = Number(maxTokens) > 0 ? { maxTokens: Number(maxTokens) } : {};
   let stream;
   if (typeof llm.prepareCall === "function") {
-    const call = await llm.prepareCall({ provider, model, maxTokens }, signal, (controls, info) => {
+    const call = await llm.prepareCall({ provider, model, ...limit2 }, signal, (controls, info) => {
       const effort = pickReasoningEffort(reasoning, (info?.reasoning?.efforts ?? []).map((e) => e.id));
       return effort === void 0 ? controls : { ...controls, reasoningEffort: effort };
     });
     stream = call.stream({ ...call.config, system, messages, signal });
   } else {
-    stream = llm.stream({ provider, model, maxTokens, system, messages, signal });
+    stream = llm.stream({ provider, model, ...limit2, system, messages, signal });
   }
   let text2 = "";
   let finish = null;
@@ -2836,11 +2838,33 @@ async function streamAnswer(llm, { provider, model, maxTokens, reasoning, system
       finish = chunk.reason ?? null;
     }
   }
-  if (finish?.kind === "max-tokens") {
-    const note = "\n\n（回答达到长度上限被截断。）";
-    text2 += note;
-    onDelta(note);
+  return { text: text2, finish };
+}
+function continuationPrompt(user, written) {
+  return `${user}
+
+---
+
+# 你上一轮已经写出的回答（因长度上限中断）
+
+${written}
+
+---
+
+请从中断的地方直接接着写完。不要重复已经写过的内容，不要加开场白，也不要说明这是续写。`;
+}
+async function streamAnswer(llm, options) {
+  let text2 = "";
+  for (let round2 = 0; round2 <= MAX_CONTINUATIONS; round2++) {
+    const user = round2 === 0 ? options.user : continuationPrompt(options.user, text2);
+    const { text: part, finish } = await streamOnce(llm, { ...options, user });
+    text2 += part;
+    if (finish?.kind !== "max-tokens") return text2;
+    if (part.trim() === "") break;
   }
+  const note = text2.trim() === "" ? "（模型的思考用完了输出额度，没有写出回答。请把推理强度调低一档后重试，或者把问题拆小一些。）" : "\n\n（回答很长，自动续写后仍超出长度上限。可以把推理强度调低一档，或者把问题拆成几个小问题。）";
+  text2 += note;
+  options.onDelta(note);
   return text2;
 }
 
@@ -4000,7 +4024,7 @@ ${liveState.lessons.text}` : "";
 
 // src/host/routes.js
 var API_PATH = "/stock-market/api";
-var VERSION = true ? "0.6.4" : "dev";
+var VERSION = true ? "0.6.5" : "dev";
 var MAX_BODY = 256 * 1024;
 function sendJson(res, status2, body) {
   res.statusCode = status2;
@@ -4425,7 +4449,8 @@ var DEFAULTS = {
   riskPct: 0.01,
   provider: "deepseek-account",
   model: "deepseek-flash",
-  maxTokens: 4096,
+  maxTokens: null,
+  // 不限制：用 DSH 给模型的默认输出上限
   reasoning: "auto",
   tickSeconds: 20,
   fees: {}

@@ -1796,7 +1796,7 @@ function SearchBox({ t, api: api2, onSelect }) {
   } }, /* @__PURE__ */ React9.createElement("span", null, r.name), /* @__PURE__ */ React9.createElement("span", { className: "sm-muted" }, r.code), /* @__PURE__ */ React9.createElement("span", { className: "sm-tag" }, r.type)))));
 }
 var TABS = ["market", "watch", "live", "paper", "screen", "alerts", "advisor"];
-var CLIENT_VERSION = true ? "0.6.4" : "dev";
+var CLIENT_VERSION = true ? "0.6.5" : "dev";
 var Boundary = class extends React9.Component {
   constructor(props) {
     super(props);

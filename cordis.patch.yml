@@ -3,7 +3,7 @@
 # Client：在左侧栏注册「市场」入口与主区域页面。
 # 配置项（可在 profile 的 cordis.patch.yml 里按 id 覆盖，覆盖时需写完整 config）：
 #   provider / model     AI 顾问使用的模型路由，默认 deepseek-account / deepseek-flash
-#   maxTokens            单次回答上限，默认 4096
+#   maxTokens            单次回答的输出上限（含思考）；默认不限制，用 DSH 给模型的默认值
 #   model                例如 deepseek-flash（默认，V4.1 Flash）或 deepseek-v4-pro（更强、更贵）
 #   reasoning            auto（用 DeepSeek 路由的默认强度）或 off / low / high / max
 #                        （页面里 AI 顾问标题旁的下拉框选的模型和强度优先；选「插件默认」回到这里的值）
