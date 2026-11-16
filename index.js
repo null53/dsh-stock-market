@@ -3916,7 +3916,7 @@ ${liveState.lessons.text}` : "";
 
 // src/host/routes.js
 var API_PATH = "/stock-market/api";
-var VERSION = true ? "0.6.0" : "dev";
+var VERSION = true ? "0.6.1" : "dev";
 var MAX_BODY = 256 * 1024;
 function sendJson(res, status2, body) {
   res.statusCode = status2;
