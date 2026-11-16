@@ -4262,7 +4262,7 @@ ${liveState.lessons.text}` : "";
 
 // src/host/routes.js
 var API_PATH = "/stock-market/api";
-var VERSION = true ? "0.8.0" : "dev";
+var VERSION = true ? "0.8.1" : "dev";
 var MAX_BODY = 256 * 1024;
 var MAX_CHAT_BODY = 24 * 1024 * 1024;
 function sendJson(res, status2, body) {
@@ -4349,9 +4349,20 @@ async function streamSse(res, run, log) {
     res.end();
   }
 }
+function rejectionOf(connection, req) {
+  if (typeof connection?.admit === "function") {
+    const admission = connection.admit(req);
+    return admission && typeof admission === "object" && "rejection" in admission ? admission.rejection : void 0;
+  }
+  if (typeof connection?.requestRejection === "function") return connection.requestRejection(req);
+  return 403;
+}
 function registerRoutes(ctx, ready, log) {
+  if (typeof ctx.connection?.admit !== "function" && typeof ctx.connection?.requestRejection !== "function") {
+    log.warn("当前 DSH 的 connection 服务没有 admit / requestRejection，无法鉴权，「市场」页面的请求都会被拒绝；请告诉插件作者 DSH 的版本号");
+  }
   const handler = async (req, res) => {
-    const rejection = ctx.connection.requestRejection(req);
+    const rejection = rejectionOf(ctx.connection, req);
     if (rejection !== void 0) {
       res.statusCode = rejection;
       res.end();
