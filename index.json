@@ -5,7 +5,7 @@
     "en": "DSH plugins by null53"
   },
   "description": {
-    "zh": "左侧栏「市场」：A股、ETF、港美股与场外基金行情，海龟量化信号、模拟盘、实盘跟踪、规则选股、提醒，以及内置交易规则库的 AI 顾问。",
+    "zh": "DeepSeek Harness 左侧栏「市场」插件。",
     "en": "Market plugin for DeepSeek Harness."
   },
   "plugins": [
@@ -41,6 +41,15 @@
         ]
       },
       "versions": [
+        {
+          "version": "0.6.2",
+          "publishTimestamp": 1794829177,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/null53/dsh-stock-market",
+            "commit": "bdc0bee83f8642b08607b9cda5be01e18c579c1c"
+          }
+        },
         {
           "version": "0.6.1",
           "publishTimestamp": 1794822613,
