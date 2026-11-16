@@ -1,0 +1,15 @@
+# 「市场」插件
+# Host：注册 /stock-market/api 路由、market_* 智能体工具、提醒与限价单的定时检查。
+# Client：在左侧栏注册「市场」入口与主区域页面。
+# 配置项（可在 profile 的 cordis.patch.yml 里按 id 覆盖，覆盖时需写完整 config）：
+#   provider / model     AI 顾问使用的模型路由，默认 deepseek-account / deepseek-flash
+#   maxTokens            单次回答上限，默认 4096
+#   reasoning            auto（模型默认）或 low（最低推理强度，回答更快）
+#   initialCash          模拟盘初始资金，默认 1000000
+#   riskPct              头寸单位的风险比例，默认 0.01（1%）
+#   tickSeconds          提醒与限价单检查间隔，默认 20 秒
+#   （交易规则库随插件提供，无需配置）
+- insert:
+    - id: stock-market
+      name: '@local/dsh-stock-market'
+      config: {}
