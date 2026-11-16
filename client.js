@@ -146,6 +146,7 @@ var api = {
   livePlanTrade: (symbol) => get("live/plan-trade", { symbol }),
   liveFill: (body) => post("live/fill", body),
   liveStop: (symbol, stop) => post("live/stop", { symbol, stop }),
+  liveDividendMode: (symbol, mode) => post("live/dividend-mode", { symbol, mode }),
   liveTrade: (id, fields) => post("live/trade", { ...fields, id }),
   liveTodo: (id, action) => post("live/todo", { id, action }),
   liveReset: () => post("live/reset", {}),
@@ -1674,7 +1675,7 @@ function PaperPanel({ t, api: api2, paper, error, refresh, onSelect }) {
   };
   const sellAll = (p) => act(() => api2.order({ symbol: p.secid, side: "sell", qty: p.available, type: "market" }));
   const pending = paper.orders.filter((o) => o.status === "pending");
-  return /* @__PURE__ */ React7.createElement("div", { className: "sm-panel" }, /* @__PURE__ */ React7.createElement("div", { className: "sm-grid-stats sm-grid-wide" }, /* @__PURE__ */ React7.createElement("div", { className: "sm-stat" }, /* @__PURE__ */ React7.createElement("span", { className: "sm-stat-label" }, t("paper.equity")), /* @__PURE__ */ React7.createElement("span", { className: "sm-stat-value" }, money(paper.equity))), /* @__PURE__ */ React7.createElement("div", { className: "sm-stat" }, /* @__PURE__ */ React7.createElement("span", { className: "sm-stat-label" }, t("paper.pnl")), /* @__PURE__ */ React7.createElement("span", { className: `sm-stat-value ${tone(paper.totalPnl)}` }, money(paper.totalPnl), "（", pct(paper.totalPnlPct), "）")), /* @__PURE__ */ React7.createElement("div", { className: "sm-stat" }, /* @__PURE__ */ React7.createElement("span", { className: "sm-stat-label" }, t("paper.cash")), /* @__PURE__ */ React7.createElement("span", { className: "sm-stat-value" }, money(paper.availableCash))), /* @__PURE__ */ React7.createElement("div", { className: "sm-stat" }, /* @__PURE__ */ React7.createElement("span", { className: "sm-stat-label" }, t("paper.value")), /* @__PURE__ */ React7.createElement("span", { className: "sm-stat-value" }, money(paper.marketValue))), /* @__PURE__ */ React7.createElement("div", { className: "sm-stat" }, /* @__PURE__ */ React7.createElement("span", { className: "sm-stat-label" }, t("paper.realized")), /* @__PURE__ */ React7.createElement("span", { className: `sm-stat-value ${tone(paper.realized)}` }, money(paper.realized))), /* @__PURE__ */ React7.createElement("div", { className: "sm-stat" }, /* @__PURE__ */ React7.createElement("span", { className: "sm-stat-label" }, t("paper.fees")), /* @__PURE__ */ React7.createElement("span", { className: "sm-stat-value" }, money(paper.feesPaid)))), paper.equityHistory.length >= 2 && /* @__PURE__ */ React7.createElement("section", { className: "sm-card" }, /* @__PURE__ */ React7.createElement("header", { className: "sm-card-head" }, /* @__PURE__ */ React7.createElement("h3", null, t("paper.curve"))), /* @__PURE__ */ React7.createElement(LineChart, { t, baseline: paper.initialCash, points: paper.equityHistory.map((p) => ({ label: p.date, value: p.equity })), height: 160, valueFormat: (v) => big(v, t) })), msg && /* @__PURE__ */ React7.createElement("p", { className: "sm-error", role: "alert" }, msg), /* @__PURE__ */ React7.createElement("h4", { className: "sm-subhead" }, t("paper.positions")), paper.positions.length === 0 ? /* @__PURE__ */ React7.createElement("p", { className: "sm-muted" }, t("paper.noPositions")) : /* @__PURE__ */ React7.createElement("div", { className: "sm-table-wrap" }, /* @__PURE__ */ React7.createElement("table", { className: "sm-table sm-table-hover" }, /* @__PURE__ */ React7.createElement("thead", null, /* @__PURE__ */ React7.createElement("tr", null, /* @__PURE__ */ React7.createElement("th", null, t("col.name")), /* @__PURE__ */ React7.createElement("th", null, t("paper.qty")), /* @__PURE__ */ React7.createElement("th", null, t("paper.cost")), /* @__PURE__ */ React7.createElement("th", null, t("col.price")), /* @__PURE__ */ React7.createElement("th", null, t("paper.pnl")), /* @__PURE__ */ React7.createElement("th", null, t("paper.stop")), /* @__PURE__ */ React7.createElement("th", null))), /* @__PURE__ */ React7.createElement("tbody", null, paper.positions.map((p) => /* @__PURE__ */ React7.createElement("tr", { key: p.secid, onClick: () => onSelect(p.secid) }, /* @__PURE__ */ React7.createElement("td", null, /* @__PURE__ */ React7.createElement("button", { type: "button", className: "sm-link", onClick: (e) => {
+  return /* @__PURE__ */ React7.createElement("div", { className: "sm-panel" }, /* @__PURE__ */ React7.createElement("div", { className: "sm-grid-stats sm-grid-wide" }, /* @__PURE__ */ React7.createElement("div", { className: "sm-stat" }, /* @__PURE__ */ React7.createElement("span", { className: "sm-stat-label" }, t("paper.equity")), /* @__PURE__ */ React7.createElement("span", { className: "sm-stat-value" }, money(paper.equity))), /* @__PURE__ */ React7.createElement("div", { className: "sm-stat" }, /* @__PURE__ */ React7.createElement("span", { className: "sm-stat-label" }, t("paper.pnl")), /* @__PURE__ */ React7.createElement("span", { className: `sm-stat-value ${tone(paper.totalPnl)}` }, money(paper.totalPnl), "（", pct(paper.totalPnlPct), "）")), /* @__PURE__ */ React7.createElement("div", { className: "sm-stat" }, /* @__PURE__ */ React7.createElement("span", { className: "sm-stat-label" }, t("paper.cash")), /* @__PURE__ */ React7.createElement("span", { className: "sm-stat-value" }, money(paper.availableCash))), /* @__PURE__ */ React7.createElement("div", { className: "sm-stat" }, /* @__PURE__ */ React7.createElement("span", { className: "sm-stat-label" }, t("paper.value")), /* @__PURE__ */ React7.createElement("span", { className: "sm-stat-value" }, money(paper.marketValue))), /* @__PURE__ */ React7.createElement("div", { className: "sm-stat" }, /* @__PURE__ */ React7.createElement("span", { className: "sm-stat-label" }, t("paper.realized")), /* @__PURE__ */ React7.createElement("span", { className: `sm-stat-value ${tone(paper.realized)}` }, money(paper.realized))), paper.dividends > 0 && /* @__PURE__ */ React7.createElement("div", { className: "sm-stat" }, /* @__PURE__ */ React7.createElement("span", { className: "sm-stat-label" }, t("paper.dividends")), /* @__PURE__ */ React7.createElement("span", { className: "sm-stat-value sm-up" }, money(paper.dividends), paper.dividendTax > 0 ? /* @__PURE__ */ React7.createElement("span", { className: "sm-muted sm-small" }, "（", t("paper.dividendTax", { amount: money(paper.dividendTax) }), "）") : null)), /* @__PURE__ */ React7.createElement("div", { className: "sm-stat" }, /* @__PURE__ */ React7.createElement("span", { className: "sm-stat-label" }, t("paper.fees")), /* @__PURE__ */ React7.createElement("span", { className: "sm-stat-value" }, money(paper.feesPaid)))), paper.equityHistory.length >= 2 && /* @__PURE__ */ React7.createElement("section", { className: "sm-card" }, /* @__PURE__ */ React7.createElement("header", { className: "sm-card-head" }, /* @__PURE__ */ React7.createElement("h3", null, t("paper.curve"))), /* @__PURE__ */ React7.createElement(LineChart, { t, baseline: paper.initialCash, points: paper.equityHistory.map((p) => ({ label: p.date, value: p.equity })), height: 160, valueFormat: (v) => big(v, t) })), msg && /* @__PURE__ */ React7.createElement("p", { className: "sm-error", role: "alert" }, msg), /* @__PURE__ */ React7.createElement("h4", { className: "sm-subhead" }, t("paper.positions")), paper.positions.length === 0 ? /* @__PURE__ */ React7.createElement("p", { className: "sm-muted" }, t("paper.noPositions")) : /* @__PURE__ */ React7.createElement("div", { className: "sm-table-wrap" }, /* @__PURE__ */ React7.createElement("table", { className: "sm-table sm-table-hover" }, /* @__PURE__ */ React7.createElement("thead", null, /* @__PURE__ */ React7.createElement("tr", null, /* @__PURE__ */ React7.createElement("th", null, t("col.name")), /* @__PURE__ */ React7.createElement("th", null, t("paper.qty")), /* @__PURE__ */ React7.createElement("th", null, t("paper.cost")), /* @__PURE__ */ React7.createElement("th", null, t("col.price")), /* @__PURE__ */ React7.createElement("th", null, t("paper.pnl")), /* @__PURE__ */ React7.createElement("th", null, t("paper.stop")), /* @__PURE__ */ React7.createElement("th", null))), /* @__PURE__ */ React7.createElement("tbody", null, paper.positions.map((p) => /* @__PURE__ */ React7.createElement("tr", { key: p.secid, onClick: () => onSelect(p.secid) }, /* @__PURE__ */ React7.createElement("td", null, /* @__PURE__ */ React7.createElement("button", { type: "button", className: "sm-link", onClick: (e) => {
     e.stopPropagation();
     onSelect(p.secid);
   } }, p.name), /* @__PURE__ */ React7.createElement("div", { className: "sm-muted sm-small" }, p.code)), /* @__PURE__ */ React7.createElement("td", null, p.qty, /* @__PURE__ */ React7.createElement("div", { className: "sm-muted sm-small" }, t("paper.avail", { n: p.available }))), /* @__PURE__ */ React7.createElement("td", null, price(p.avgCost)), /* @__PURE__ */ React7.createElement("td", { className: tone(p.pct) }, price(p.price)), /* @__PURE__ */ React7.createElement("td", { className: tone(p.pnl) }, money(p.pnl), /* @__PURE__ */ React7.createElement("div", { className: "sm-small" }, pct(p.pnlPct))), /* @__PURE__ */ React7.createElement("td", null, /* @__PURE__ */ React7.createElement(StopEditor, { t, api: api2, position: p, onDone: refresh })), /* @__PURE__ */ React7.createElement("td", null, /* @__PURE__ */ React7.createElement("button", { type: "button", className: "sm-btn sm-btn-ghost", disabled: busy || p.available === 0, onClick: (e) => {
@@ -1833,7 +1834,7 @@ function LiveTradeForm({ t, api: api2, symbol, side: initialSide = "buy", preset
     setResult(null);
     try {
       const r = await api2.liveFill({ symbol, side, qty: Number(form.qty), price: Number(form.price), fee: form.fee === "" ? void 0 : Number(form.fee), date: form.date || void 0, stop: side === "buy" ? Number(form.stop) : void 0, signal: form.signal, reason: form.reason, note: form.note });
-      const warn = r.warnings.map((w) => t(`live.warn.${w.key}`)).join(" ");
+      const warn = r.warnings.map((w) => t(`live.warn.${w.key}`, { ...w.params ?? {}, amount: w.params?.amount !== void 0 ? money(w.params.amount) : void 0 })).join(" ");
       const text = `${r.trade.status === "closed" ? t("live.recorded.closed", { r: rText(r.trade.r) }) : t("live.recorded.ok")}${warn ? ` ${warn}` : ""}`;
       setResult({ ok: true, text });
       onDone?.(r, text);
@@ -1857,7 +1858,7 @@ function TodoList({ t, api: api2, todos, refresh, onRecord }) {
     });
     await act(todo.id, "done");
   };
-  return /* @__PURE__ */ React8.createElement("ul", { className: "sm-todos" }, todos.map((todo) => /* @__PURE__ */ React8.createElement("li", { key: todo.id, className: `sm-todo sm-todo-p${todo.priority}` }, /* @__PURE__ */ React8.createElement("span", { className: "sm-todo-text" }, t(`live.todo.${todo.type}${todo.fund && FUND_KEYS.has(todo.type) ? "Fund" : ""}`, { ...todo, qty: qtyText(todo.qty, todo.fund), amount: money(todo.amount), kind: todo.kind ? t(`ev.${todo.kind}`) : "" })), /* @__PURE__ */ React8.createElement("span", { className: "sm-todo-actions" }, (todo.type === "sellStop" || todo.type === "exitSignal") && /* @__PURE__ */ React8.createElement("button", { type: "button", className: "sm-btn sm-btn-sm", onClick: () => onRecord({ symbol: todo.secid, side: "sell", preset: { qty: todo.qty, price: todo.price, reason: todo.type === "sellStop" ? "stop" : "exit" } }) }, t("live.todo.recordSell")), todo.type === "addUnit" && /* @__PURE__ */ React8.createElement("button", { type: "button", className: "sm-btn sm-btn-sm", onClick: () => onRecord({ symbol: todo.secid, side: "buy", preset: { qty: todo.qty, price: todo.price, stop: todo.newStop } }) }, t("live.todo.recordAdd")), todo.type === "raiseStop" && /* @__PURE__ */ React8.createElement("button", { type: "button", className: "sm-btn sm-btn-sm", onClick: () => raise(todo) }, t("live.todo.applyStop")), /* @__PURE__ */ React8.createElement("button", { type: "button", className: "sm-btn sm-btn-ghost sm-btn-sm", onClick: () => act(todo.id, "done") }, t("live.todo.done")), /* @__PURE__ */ React8.createElement("button", { type: "button", className: "sm-btn sm-btn-ghost sm-btn-sm", onClick: () => act(todo.id, "dismiss") }, t("live.todo.dismiss"))))));
+  return /* @__PURE__ */ React8.createElement("ul", { className: "sm-todos" }, todos.map((todo) => /* @__PURE__ */ React8.createElement("li", { key: todo.id, className: `sm-todo sm-todo-p${todo.priority}` }, /* @__PURE__ */ React8.createElement("span", { className: "sm-todo-text" }, t(`live.todo.${todo.type}${todo.type === "corporateAction" && todo.reinvested > 0 ? "Reinvest" : todo.fund && FUND_KEYS.has(todo.type) ? "Fund" : ""}`, { ...todo, cash: money(todo.cash), qtyBefore: qtyText(todo.qtyBefore, todo.fund), qtyAfter: qtyText(todo.qtyAfter, todo.fund), reinvested: qtyText(todo.reinvested, true), qty: qtyText(todo.qty, todo.fund), amount: money(todo.amount), kind: todo.kind ? t(`ev.${todo.kind}`) : "" })), /* @__PURE__ */ React8.createElement("span", { className: "sm-todo-actions" }, (todo.type === "sellStop" || todo.type === "exitSignal") && /* @__PURE__ */ React8.createElement("button", { type: "button", className: "sm-btn sm-btn-sm", onClick: () => onRecord({ symbol: todo.secid, side: "sell", preset: { qty: todo.qty, price: todo.price, reason: todo.type === "sellStop" ? "stop" : "exit" } }) }, t("live.todo.recordSell")), todo.type === "addUnit" && /* @__PURE__ */ React8.createElement("button", { type: "button", className: "sm-btn sm-btn-sm", onClick: () => onRecord({ symbol: todo.secid, side: "buy", preset: { qty: todo.qty, price: todo.price, stop: todo.newStop } }) }, t("live.todo.recordAdd")), todo.type === "raiseStop" && /* @__PURE__ */ React8.createElement("button", { type: "button", className: "sm-btn sm-btn-sm", onClick: () => raise(todo) }, t("live.todo.applyStop")), /* @__PURE__ */ React8.createElement("button", { type: "button", className: "sm-btn sm-btn-ghost sm-btn-sm", onClick: () => act(todo.id, "done") }, t("live.todo.done")), /* @__PURE__ */ React8.createElement("button", { type: "button", className: "sm-btn sm-btn-ghost sm-btn-sm", onClick: () => act(todo.id, "dismiss") }, t("live.todo.dismiss"))))));
 }
 function StopCell({ t, api: api2, position, refresh }) {
   const [value, setValue] = React8.useState(position.stop);
@@ -1957,7 +1958,22 @@ function LivePanel({ t, api: api2, live, error, refresh, onSelect, aiReady, reco
   return /* @__PURE__ */ React8.createElement("div", { className: "sm-panel" }, /* @__PURE__ */ React8.createElement("p", { className: "sm-notice" }, t("live.banner")), /* @__PURE__ */ React8.createElement("div", { className: "sm-grid-stats sm-grid-wide" }, /* @__PURE__ */ React8.createElement("div", { className: "sm-stat" }, /* @__PURE__ */ React8.createElement("span", { className: "sm-stat-label" }, t("paper.equity")), /* @__PURE__ */ React8.createElement("span", { className: "sm-stat-value" }, money(s.equity))), /* @__PURE__ */ React8.createElement("div", { className: "sm-stat" }, /* @__PURE__ */ React8.createElement("span", { className: "sm-stat-label" }, t("live.deposited")), /* @__PURE__ */ React8.createElement("span", { className: "sm-stat-value" }, money(s.deposited))), /* @__PURE__ */ React8.createElement("div", { className: "sm-stat" }, /* @__PURE__ */ React8.createElement("span", { className: "sm-stat-label" }, t("paper.pnl")), /* @__PURE__ */ React8.createElement("span", { className: `sm-stat-value ${tone(s.totalPnl)}` }, money(s.totalPnl), "（", pct(s.totalPnlPct), "）")), /* @__PURE__ */ React8.createElement("div", { className: "sm-stat" }, /* @__PURE__ */ React8.createElement("span", { className: "sm-stat-label" }, t("live.drawdown")), /* @__PURE__ */ React8.createElement("span", { className: `sm-stat-value ${s.drawdown < 0 ? "sm-down" : ""}` }, s.drawdown, "%")), /* @__PURE__ */ React8.createElement("div", { className: "sm-stat" }, /* @__PURE__ */ React8.createElement("span", { className: "sm-stat-label" }, t("live.openRisk")), /* @__PURE__ */ React8.createElement("span", { className: "sm-stat-value" }, s.openRiskPct, "% / ", plan.maxOpenRisk * 100, "%")), /* @__PURE__ */ React8.createElement("div", { className: "sm-stat" }, /* @__PURE__ */ React8.createElement("span", { className: "sm-stat-label" }, t("live.stageLabel")), /* @__PURE__ */ React8.createElement("span", { className: "sm-stat-value" }, plan.stage === "trial" ? t("live.stage.trial", { done: Math.max(0, trialDone), total: plan.trialTrades }) : t("live.stage.normal"))), /* @__PURE__ */ React8.createElement("div", { className: "sm-stat" }, /* @__PURE__ */ React8.createElement("span", { className: "sm-stat-label" }, t("live.plan.risk")), /* @__PURE__ */ React8.createElement("span", { className: "sm-stat-value" }, (plan.riskPerTrade * 100).toFixed(2), "%")), /* @__PURE__ */ React8.createElement("div", { className: "sm-stat" }, /* @__PURE__ */ React8.createElement("span", { className: "sm-stat-label" }, t("paper.cash")), /* @__PURE__ */ React8.createElement("span", { className: "sm-stat-value" }, money(s.cash)))), /* @__PURE__ */ React8.createElement("h4", { className: "sm-subhead" }, t("live.todo.title")), /* @__PURE__ */ React8.createElement(TodoList, { t, api: api2, todos: live.todos, refresh, onRecord: (r) => setRecord({ ...r, id: Date.now() }) }), /* @__PURE__ */ React8.createElement("h4", { className: "sm-subhead" }, t("paper.positions")), s.positions.length === 0 ? /* @__PURE__ */ React8.createElement("p", { className: "sm-muted" }, t("live.noPositions")) : /* @__PURE__ */ React8.createElement("div", { className: "sm-table-wrap" }, /* @__PURE__ */ React8.createElement("table", { className: "sm-table sm-table-hover" }, /* @__PURE__ */ React8.createElement("thead", null, /* @__PURE__ */ React8.createElement("tr", null, /* @__PURE__ */ React8.createElement("th", null, t("col.name")), /* @__PURE__ */ React8.createElement("th", null, t("paper.qty")), /* @__PURE__ */ React8.createElement("th", null, t("paper.cost")), /* @__PURE__ */ React8.createElement("th", null, t("col.price")), /* @__PURE__ */ React8.createElement("th", null, t("live.unrealized")), /* @__PURE__ */ React8.createElement("th", null, t("paper.stop")), /* @__PURE__ */ React8.createElement("th", null, t("live.toStop")), /* @__PURE__ */ React8.createElement("th", null))), /* @__PURE__ */ React8.createElement("tbody", null, s.positions.map((p) => /* @__PURE__ */ React8.createElement("tr", { key: p.secid, onClick: () => onSelect(p.secid) }, /* @__PURE__ */ React8.createElement("td", null, /* @__PURE__ */ React8.createElement("button", { type: "button", className: "sm-link", onClick: (e) => {
     e.stopPropagation();
     onSelect(p.secid);
-  } }, p.name), /* @__PURE__ */ React8.createElement("div", { className: "sm-muted sm-small" }, p.code, p.fund ? ` · ${t("kind.fund")}` : "", " · ", t(`live.signal.${p.signal}`), " · ", t("live.units", { n: p.units }))), /* @__PURE__ */ React8.createElement("td", null, qtyText(p.qty, p.fund), /* @__PURE__ */ React8.createElement("div", { className: "sm-muted sm-small" }, p.weight, "%")), /* @__PURE__ */ React8.createElement("td", null, price(p.avgCost)), /* @__PURE__ */ React8.createElement("td", { className: tone(p.pct) }, price(p.price)), /* @__PURE__ */ React8.createElement("td", { className: tone(p.pnl) }, money(p.pnl), /* @__PURE__ */ React8.createElement("div", { className: `sm-small ${rTone(p.unrealizedR)}` }, rText(p.unrealizedR))), /* @__PURE__ */ React8.createElement("td", null, /* @__PURE__ */ React8.createElement(StopCell, { t, api: api2, position: p, refresh })), /* @__PURE__ */ React8.createElement("td", null, p.stopDistancePct, "%", p.stopDistanceN !== null ? /* @__PURE__ */ React8.createElement("div", { className: "sm-muted sm-small" }, p.stopDistanceN, "N") : null), /* @__PURE__ */ React8.createElement("td", null, /* @__PURE__ */ React8.createElement("button", { type: "button", className: "sm-btn sm-btn-ghost sm-btn-sm", onClick: (e) => {
+  } }, p.name), /* @__PURE__ */ React8.createElement("div", { className: "sm-muted sm-small" }, p.code, p.fund ? ` · ${t("kind.fund")}` : "", " · ", t(`live.signal.${p.signal}`), " · ", t("live.units", { n: p.units }))), /* @__PURE__ */ React8.createElement("td", null, qtyText(p.qty, p.fund), /* @__PURE__ */ React8.createElement("div", { className: "sm-muted sm-small" }, p.weight, "%"), p.dividends > 0 && /* @__PURE__ */ React8.createElement("div", { className: "sm-muted sm-small" }, t("live.dividendsReceived", { amount: money(p.dividends) })), p.fund && /* @__PURE__ */ React8.createElement(
+    "select",
+    {
+      className: "sm-input-sm",
+      value: p.dividendMode,
+      "aria-label": t("live.dividendMode", { name: p.name }),
+      onClick: (e) => e.stopPropagation(),
+      onChange: async (e) => {
+        await api2.liveDividendMode(p.secid, e.target.value).catch(() => {
+        });
+        refresh();
+      }
+    },
+    /* @__PURE__ */ React8.createElement("option", { value: "cash" }, t("live.dividendMode.cash")),
+    /* @__PURE__ */ React8.createElement("option", { value: "reinvest" }, t("live.dividendMode.reinvest"))
+  )), /* @__PURE__ */ React8.createElement("td", null, price(p.avgCost)), /* @__PURE__ */ React8.createElement("td", { className: tone(p.pct) }, price(p.price)), /* @__PURE__ */ React8.createElement("td", { className: tone(p.pnl) }, money(p.pnl), /* @__PURE__ */ React8.createElement("div", { className: `sm-small ${rTone(p.unrealizedR)}` }, rText(p.unrealizedR))), /* @__PURE__ */ React8.createElement("td", null, /* @__PURE__ */ React8.createElement(StopCell, { t, api: api2, position: p, refresh })), /* @__PURE__ */ React8.createElement("td", null, p.stopDistancePct, "%", p.stopDistanceN !== null ? /* @__PURE__ */ React8.createElement("div", { className: "sm-muted sm-small" }, p.stopDistanceN, "N") : null), /* @__PURE__ */ React8.createElement("td", null, /* @__PURE__ */ React8.createElement("button", { type: "button", className: "sm-btn sm-btn-ghost sm-btn-sm", onClick: (e) => {
     e.stopPropagation();
     setRecord({ symbol: p.secid, side: "sell", preset: { qty: p.qty, price: p.price }, id: Date.now() });
   } }, t("live.recordTrade")))))))), /* @__PURE__ */ React8.createElement("div", { ref: formRef }, record && /* @__PURE__ */ React8.createElement(
@@ -2069,7 +2085,7 @@ function SearchBox({ t, api: api2, onSelect }) {
   } }, /* @__PURE__ */ React9.createElement("span", null, r.name), /* @__PURE__ */ React9.createElement("span", { className: "sm-muted" }, r.code), /* @__PURE__ */ React9.createElement("span", { className: "sm-tag" }, r.type)))));
 }
 var TABS = ["market", "watch", "live", "paper", "screen", "alerts", "advisor"];
-var CLIENT_VERSION = true ? "0.8.1" : "dev";
+var CLIENT_VERSION = true ? "0.9.0" : "dev";
 var Boundary = class extends React9.Component {
   constructor(props) {
     super(props);
@@ -2365,6 +2381,10 @@ var zhLive = {
   "live.stage.normal": "正常",
   "live.noPositions": '还没有实盘持仓。在证券或基金详情里点"记录实盘"，先看买入计划单，成交后再录入。',
   "live.unrealized": "浮动盈亏",
+  "live.dividendsReceived": "已收分红 {amount}",
+  "live.dividendMode": "{name} 的分红方式",
+  "live.dividendMode.cash": "现金分红",
+  "live.dividendMode.reinvest": "红利再投资",
   "live.toStop": "距止损",
   "live.units": "{n} 个单位",
   "live.recordTrade": "记录成交",
@@ -2420,6 +2440,7 @@ var zhLive = {
   "live.warn.lot": "提示：数量不是 100 的整数倍。",
   "live.warn.cash": "提示：记录的现金不够，可能需要先入金。",
   "live.warn.tPlusOne": "提示：卖出了当天买入的股份（A 股 T+1），请确认日期。",
+  "live.warn.dividendTax": "按持股期估算的红利税 {amount} 元已从现金扣除（券商会在卖出后扣）。",
   "live.warn.fund7d": "提示：卖出了持有不满 7 天的份额，会被收取 1.5% 的赎回费。",
   "live.signal.s1": "海龟系统1（20日突破）",
   "live.signal.s2": "海龟系统2（55日突破）",
@@ -2444,6 +2465,8 @@ var zhLive = {
   "live.todo.negativeEdge": "最近 {trades} 笔的期望值是 {expectancy}R：这套做法目前在亏钱，先缩小规模，找出原因",
   "live.todo.reviewTrades": "有 {count} 笔已平仓交易还没复盘：标记是否按计划执行、有没有失误",
   "live.todo.aiReview": "又平仓了 {count} 笔，可以让 AI 复盘，更新你的个人交易规则",
+  "live.todo.corporateAction": "{name} 在 {date} 除权除息（{plan}）：已自动调整，持有数量 {qtyBefore} → {qtyAfter}，税前分红 {cash} 元已记入现金，止损价和加仓价已按除权调整",
+  "live.todo.corporateActionReinvest": "{name} 在 {date} 分红（{plan}）：已按红利再投资折成 {reinvested} 份，止损价已按除息调整",
   "live.todo.recordSell": "记录卖出",
   "live.todo.recordAdd": "记录加仓",
   "live.todo.applyStop": "上移止损",
@@ -2564,6 +2587,10 @@ var enLive = {
   "live.stage.normal": "Normal",
   "live.noPositions": "No live positions yet. Open a security or fund and choose Record live trade to see the plan first, then record the fill.",
   "live.unrealized": "Unrealized",
+  "live.dividendsReceived": "Dividends {amount}",
+  "live.dividendMode": "Dividend option for {name}",
+  "live.dividendMode.cash": "Cash dividends",
+  "live.dividendMode.reinvest": "Reinvest",
   "live.toStop": "To stop",
   "live.units": "{n} units",
   "live.recordTrade": "Record fill",
@@ -2619,6 +2646,7 @@ var enLive = {
   "live.warn.lot": "Note: quantity is not a multiple of 100.",
   "live.warn.cash": "Note: recorded cash is short; you may need to record a deposit.",
   "live.warn.tPlusOne": "Note: shares bought the same day were sold (A shares are T+1); check the date.",
+  "live.warn.dividendTax": "Estimated dividend tax of {amount} by holding period was deducted from cash (your broker deducts it after the sale).",
   "live.warn.fund7d": "Note: units held under 7 days were redeemed and incur a 1.5% fee.",
   "live.signal.s1": "Turtle System 1 (20-day breakout)",
   "live.signal.s2": "Turtle System 2 (55-day breakout)",
@@ -2643,6 +2671,8 @@ var enLive = {
   "live.todo.negativeEdge": "Expectancy over the last {trades} trades is {expectancy}R: the approach is losing money, cut size and find out why",
   "live.todo.reviewTrades": "{count} closed trades need review: mark whether you followed the plan and any mistakes",
   "live.todo.aiReview": "{count} more trades closed: ask the AI to review and update your personal rules",
+  "live.todo.corporateAction": "{name} went ex-dividend on {date} ({plan}): position adjusted, quantity {qtyBefore} → {qtyAfter}, pre-tax dividend {cash} credited to cash, stop and add prices adjusted",
+  "live.todo.corporateActionReinvest": "{name} paid a dividend on {date} ({plan}): reinvested as {reinvested} units; the stop was adjusted for the payout",
   "live.todo.recordSell": "Record sell",
   "live.todo.recordAdd": "Record add",
   "live.todo.applyStop": "Raise stop",
@@ -2989,7 +3019,9 @@ var zhUi = {
   "paper.fee": "费用 {fee}",
   "paper.reset": "重置模拟盘",
   "paper.resetConfirm": "确定清空所有持仓和记录，按初始资金重新开始吗？",
-  "paper.rules": "简化：不处理分红送转；场内基金一律按 T+1；节假日按工作日处理（休市日的市价单会被拒绝或无法成交）。",
+  "paper.dividends": "收到分红",
+  "paper.dividendTax": "已扣红利税 {amount}",
+  "paper.rules": "简化：分红送转在除权除息日自动处理（送转加股数，现金分红记入资金，卖出时按持股期扣红利税）；场内基金一律按 T+1；节假日按工作日处理（休市日的市价单会被拒绝或无法成交）。",
   "screen.presets": "选股方案",
   "screen.run": "开始选股",
   "screen.rerun": "重新选股",
@@ -3406,7 +3438,9 @@ var enUi = {
   "paper.fee": "Fee {fee}",
   "paper.reset": "Reset paper account",
   "paper.resetConfirm": "Clear all positions and history and start again with the initial cash?",
-  "paper.rules": "Simplified: no dividends or splits; all listed funds settle T+1; holidays count as weekdays (market orders on closed days are rejected or never fill).",
+  "paper.dividends": "Dividends received",
+  "paper.dividendTax": "dividend tax {amount}",
+  "paper.rules": "Simplified: dividends and bonus shares are applied on the ex-date (extra shares, cash credited, dividend tax deducted on sale by holding period); all listed funds settle T+1; holidays count as weekdays (market orders on closed days are rejected or never fill).",
   "screen.presets": "Screener presets",
   "screen.run": "Run screener",
   "screen.rerun": "Run again",

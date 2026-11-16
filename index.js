@@ -1433,6 +1433,108 @@ function analyzeNav(navs) {
   };
 }
 
+// src/host/corporate.js
+var day = (s) => String(s ?? "").slice(0, 10);
+var num2 = (v) => v === null || v === void 0 || v === "" || Number.isNaN(Number(v)) ? 0 : Number(v);
+function parseBonusRecords(rows) {
+  const actions = [];
+  const planned = [];
+  for (const r of rows ?? []) {
+    const cash = num2(r.PRETAX_BONUS_RMB) / 10;
+    const bonus = num2(r.BONUS_RATIO) / 10;
+    const transfer = num2(r.IT_RATIO) / 10;
+    const item = {
+      cashPerShare: round(cash, 6),
+      bonusPerShare: round(bonus, 6),
+      transferPerShare: round(transfer, 6),
+      factor: round(1 + bonus + transfer, 6),
+      plan: String(r.IMPL_PLAN_PROFILE ?? "").trim(),
+      recordDate: r.EQUITY_RECORD_DATE ? day(r.EQUITY_RECORD_DATE) : null,
+      yieldAtTime: r.DIVIDENT_RATIO === null || r.DIVIDENT_RATIO === void 0 ? null : round(num2(r.DIVIDENT_RATIO) * 100, 2),
+      progress: String(r.ASSIGN_PROGRESS ?? "").trim(),
+      noticeDate: r.PLAN_NOTICE_DATE ? day(r.PLAN_NOTICE_DATE) : null
+    };
+    if (cash <= 0 && bonus <= 0 && transfer <= 0) continue;
+    if (r.EX_DIVIDEND_DATE) actions.push({ id: `div:${day(r.EX_DIVIDEND_DATE)}`, exDate: day(r.EX_DIVIDEND_DATE), ...item });
+    else planned.push(item);
+  }
+  actions.sort((a, b) => a.exDate < b.exDate ? -1 : 1);
+  return { actions, planned };
+}
+function fundDividends(navs) {
+  const out = [];
+  for (let i = 1; i < (navs?.length ?? 0); i++) {
+    const prev = navs[i - 1];
+    const cur = navs[i];
+    if (!Number.isFinite(cur?.pct) || !(prev?.nav > 0) || !(cur?.nav > 0)) continue;
+    const d = prev.nav * (1 + cur.pct / 100) - cur.nav;
+    if (d > Math.max(5e-4, cur.nav * 2e-3)) {
+      out.push({ id: `fdiv:${cur.date}`, exDate: cur.date, cashPerShare: round(d, 4), bonusPerShare: 0, transferPerShare: 0, factor: 1, plan: `每份派 ${round(d, 4)} 元`, navOnEx: cur.nav });
+    }
+  }
+  return out;
+}
+function forwardAdjust(bars, actions) {
+  if (!actions?.length || !bars?.length) return bars;
+  const adj = bars.map((b) => ({ ...b }));
+  for (const a of actions) {
+    for (const b of adj) {
+      if (b.date >= a.exDate) continue;
+      for (const k of ["open", "high", "low", "close"]) {
+        if (Number.isFinite(b[k])) b[k] = round((b[k] - a.cashPerShare) / a.factor, 4);
+      }
+    }
+  }
+  return adj;
+}
+var exPrice = (price, action) => price === null || price === void 0 ? price : round((price - action.cashPerShare) / action.factor, 4);
+function applyAction(pos, action, { fractional = false, reinvest = false } = {}) {
+  const eligible = pos.lots.filter((l) => l.date < action.exDate);
+  const eligibleQty = eligible.reduce((s, l) => s + l.qty, 0);
+  if (!(eligibleQty > 0)) return null;
+  const qtyBefore = pos.lots.reduce((s, l) => s + l.qty, 0);
+  let cash = round(eligibleQty * action.cashPerShare, 2);
+  for (const lot of eligible) {
+    lot.taxBase = round((lot.taxBase ?? 0) + lot.qty * (action.cashPerShare + action.bonusPerShare), 4);
+    if (action.factor !== 1) {
+      lot.qty = fractional ? round(lot.qty * action.factor, 2) : Math.round(lot.qty * action.factor);
+    }
+    if (Number.isFinite(lot.price)) lot.price = exPrice(lot.price, action);
+  }
+  let reinvested = 0;
+  if (reinvest && cash > 0 && action.navOnEx > 0) {
+    reinvested = round(cash / action.navOnEx, 2);
+    pos.lots.push({ qty: reinvested, date: action.exDate, price: action.navOnEx, reinvested: true });
+    cash = 0;
+  }
+  for (const k of ["stop", "lastAddPrice"]) if (pos[k] !== void 0) pos[k] = exPrice(pos[k], action);
+  if (pos.n) pos.n = round(pos.n / action.factor, 4);
+  return { cash, eligibleQty, qtyBefore, qtyAfter: round(pos.lots.reduce((s, l) => s + l.qty, 0), 2), reinvested };
+}
+function dividendTaxRate(heldDays) {
+  return heldDays <= 30 ? 0.2 : heldDays <= 365 ? 0.1 : 0;
+}
+function taxOnSale(lot, take, saleDate) {
+  if (!(lot.taxBase > 0) || !(lot.qty > 0)) return 0;
+  const portion = lot.taxBase * Math.min(1, take / lot.qty);
+  lot.taxBase = round(lot.taxBase - portion, 4);
+  const days = Math.round((Date.parse(saleDate) - Date.parse(lot.date)) / 864e5);
+  return round(portion * dividendTaxRate(days), 2);
+}
+function describeDividends({ actions = [], planned = [] }, price, today2) {
+  if (actions.length === 0 && planned.length === 0) return "### 分红送转\n没有查到分红送转记录。";
+  const lines = ["### 分红送转（来自东方财富分红明细）"];
+  const yearAgo = new Date(Date.parse(today2) - 365 * 864e5).toISOString().slice(0, 10);
+  const ttm = actions.filter((a) => a.exDate > yearAgo && a.exDate <= today2).reduce((s, a) => s + a.cashPerShare, 0);
+  if (price > 0) lines.push(`最近 12 个月每股现金分红合计 ${round(ttm, 4)} 元，按现价算股息率约 ${round(ttm / price * 100, 2)}%`);
+  const upcoming = actions.filter((a) => a.exDate > today2);
+  for (const a of upcoming) lines.push(`即将除权除息：${a.exDate}（股权登记日 ${a.recordDate ?? "—"}），方案 ${a.plan}`);
+  for (const p of planned.slice(0, 2)) lines.push(`尚未实施的方案：${p.plan}（${p.progress || "进度未知"}）`);
+  const past = actions.filter((a) => a.exDate <= today2).slice(-6).reverse();
+  if (past.length) lines.push(`近几次：${past.map((a) => `${a.exDate} ${a.plan}${a.yieldAtTime !== null && a.yieldAtTime !== void 0 ? `（当时股息率 ${a.yieldAtTime}%）` : ""}`).join("；")}`);
+  return lines.join("\n");
+}
+
 // src/host/paper.js
 var DEFAULT_FEES = { commissionRate: 25e-5, minCommission: 5, stampTaxRate: 5e-4, transferRate: 1e-5 };
 function createAccount(initialCash = 1e6) {
@@ -1492,6 +1594,23 @@ function checkQty(side, qty, info, position, today2) {
   if (oddLot && qty !== avail) return fail("paper.oddLot", { avail });
   return null;
 }
+function applyPaperActions(state, secid, actions, today2 = beijingDate()) {
+  const pos = state.positions[secid];
+  if (!pos) return [];
+  pos.actions ??= [];
+  const applied = [];
+  for (const a of actions ?? []) {
+    if (a.exDate > today2 || pos.actions.includes(a.id)) continue;
+    pos.actions.push(a.id);
+    const res = applyAction(pos, a);
+    if (res === null) continue;
+    state.cash = round(state.cash + res.cash, 2);
+    state.realized = round(state.realized + res.cash, 2);
+    state.dividends = round((state.dividends ?? 0) + res.cash, 2);
+    applied.push({ ...a, ...res });
+  }
+  return applied;
+}
 function fill(state, order, price, info, fees, now) {
   const amount = round(price * order.qty, 2);
   const f = feesFor(order.side, amount, info, fees);
@@ -1509,16 +1628,23 @@ function fill(state, order, price, info, fees, now) {
   } else {
     const qtyBefore = totalQty(pos);
     const avgCost = pos.cost / qtyBefore;
-    const proceeds = amount - f.total;
-    const realized = round(proceeds - avgCost * order.qty, 2);
-    state.cash = round(state.cash + proceeds, 2);
-    state.realized = round(state.realized + realized, 2);
     let remaining = order.qty;
+    let tax = 0;
     for (const lot of pos.lots) {
       if (remaining === 0 || lot.date >= today2) continue;
       const take = Math.min(lot.qty, remaining);
+      if (info.kind === "stock") tax += taxOnSale(lot, take, today2);
       lot.qty -= take;
       remaining -= take;
+    }
+    tax = round(tax, 2);
+    const proceeds = amount - f.total - tax;
+    const realized = round(proceeds - avgCost * order.qty, 2);
+    state.cash = round(state.cash + proceeds, 2);
+    state.realized = round(state.realized + realized, 2);
+    if (tax > 0) {
+      state.dividendTax = round((state.dividendTax ?? 0) + tax, 2);
+      order.dividendTax = tax;
     }
     pos.lots = pos.lots.filter((l) => l.qty > 0);
     pos.cost = round(avgCost * totalQty(pos), 2);
@@ -1662,6 +1788,8 @@ function summarize(state, quoteOf, today2 = beijingDate()) {
     totalPnlPct: round((equity / state.initialCash - 1) * 100, 2),
     realized: state.realized,
     feesPaid: state.feesPaid,
+    dividends: state.dividends ?? 0,
+    dividendTax: state.dividendTax ?? 0,
     positions: positions.sort((a, b) => b.value - a.value),
     orders: state.orders.slice(0, 100),
     trades: state.trades.slice(0, 100),
@@ -1992,11 +2120,19 @@ function recordFill(state, fill3, info, { now = /* @__PURE__ */ new Date() } = {
     trade = tradeOf(state, pos.tradeId);
     const avgCost = pos.cost / total;
     let remaining = qty;
+    let tax = 0;
     for (const lot of pos.lots) {
       if (remaining === 0) break;
       const take = Math.min(lot.qty, remaining);
+      if (info.kind === "stock") tax += taxOnSale(lot, take, date);
       lot.qty = round(lot.qty - take, 2);
       remaining = round(remaining - take, 2);
+    }
+    tax = round(tax, 2);
+    if (tax > 0) {
+      state.cash = round(state.cash - tax, 2);
+      trade.dividendTax = round((trade.dividendTax ?? 0) + tax, 2);
+      warnings.push({ key: "dividendTax", params: { amount: tax } });
     }
     pos.lots = pos.lots.filter((l) => l.qty > 0);
     pos.cost = round(avgCost * totalQty2(pos), 2);
@@ -2043,7 +2179,7 @@ function defaultFundFee(state, fill3, amount, info, date) {
 }
 function closeTrade(trade, date) {
   const cost = trade.entries.reduce((s, e) => s + e.price * e.qty + e.fee, 0);
-  const proceeds = trade.exits.reduce((s, e) => s + e.price * e.qty - e.fee, 0);
+  const proceeds = trade.exits.reduce((s, e) => s + e.price * e.qty - e.fee, 0) + (trade.dividends ?? 0) - (trade.dividendTax ?? 0);
   trade.status = "closed";
   trade.closedAt = date;
   trade.pnl = round(proceeds - cost, 2);
@@ -2052,6 +2188,31 @@ function closeTrade(trade, date) {
   const lastExit = trade.exits[trade.exits.length - 1];
   trade.followed = trade.r !== null && trade.r < -1.3 ? false : lastExit && (lastExit.reason === "stop" || lastExit.reason === "exit") ? true : null;
   if (trade.r !== null && trade.r < -1.3 && !trade.mistakes.includes("noStop")) trade.mistakes.push("noStop");
+}
+function applyLiveActions(state, secid, actions, today2 = beijingDate()) {
+  const pos = state.positions[secid];
+  if (!pos) return [];
+  const trade = tradeOf(state, pos.tradeId);
+  if (!trade) return [];
+  trade.actions ??= [];
+  const applied = [];
+  for (const a of actions ?? []) {
+    if (a.exDate > today2 || trade.actions.some((x) => x.id === a.id)) continue;
+    const fund = pos.kind === "fund";
+    const res = applyAction(pos, a, { fractional: fund, reinvest: fund && pos.dividendMode === "reinvest" });
+    trade.actions.push({ id: a.id, exDate: a.exDate, plan: a.plan, applied: res !== null, ...res ?? {} });
+    if (res === null) continue;
+    state.cash = round(state.cash + res.cash, 2);
+    trade.dividends = round((trade.dividends ?? 0) + res.cash, 2);
+    applied.push({ ...a, ...res });
+  }
+  return applied;
+}
+function setDividendMode(state, secid, mode) {
+  const pos = state.positions[secid];
+  if (pos === void 0) return { ok: false, code: "live.noPosition" };
+  pos.dividendMode = mode === "reinvest" ? "reinvest" : "cash";
+  return { ok: true };
 }
 function setStop2(state, secid, stop) {
   const pos = state.positions[secid];
@@ -2077,12 +2238,15 @@ function liveSummary(state, quoteOf) {
     const price = q?.price ?? pos.lots[pos.lots.length - 1]?.price ?? 0;
     const value = round(price * qty, 2);
     const trade = state.trades.find((t) => t.id === pos.tradeId);
-    const pnl = round(value - pos.cost, 2);
+    const dividends = trade?.dividends ?? 0;
+    const pnl = round(value - pos.cost + dividends, 2);
     return {
       secid: pos.secid,
       code: pos.code,
       name: pos.name,
       fund: pos.kind === "fund",
+      dividends,
+      dividendMode: pos.dividendMode ?? "cash",
       qty,
       price,
       pct: q?.pct ?? null,
@@ -2204,6 +2368,20 @@ function computeTodos(state, ctx) {
     const turtleStop = n ? p.lastAddPrice - stopMultiple(fund) * n : null;
     const better = Math.max(turtleStop ?? 0, channel && channel < p.price ? channel : 0);
     if (better > p.stop * 1.005 && better < p.price) push(`raise:${p.secid}:${round(better, 2)}`, "raiseStop", 3, { secid: p.secid, name: p.name, fund, from: p.stop, to: round(better, fund ? 4 : 3) });
+    const trade = state.trades.find((t) => t.id === p.tradeId);
+    for (const a of (trade?.actions ?? []).filter((x) => x.applied)) {
+      push(`ca:${p.tradeId}:${a.id}`, "corporateAction", 4, {
+        secid: p.secid,
+        name: p.name,
+        fund,
+        date: a.exDate,
+        plan: a.plan,
+        cash: a.cash,
+        qtyBefore: a.qtyBefore,
+        qtyAfter: a.qtyAfter,
+        reinvested: a.reinvested
+      });
+    }
     for (const e of ctx.eventsOf(p.secid) ?? []) {
       push(`event:${p.secid}:${e.time.slice(0, 10)}:${e.kind}`, "eventRisk", 4, { secid: p.secid, name: p.name, date: e.time.slice(0, 10), kind: e.kind, title: e.title });
     }
@@ -2257,7 +2435,8 @@ function liveForAi(state, summary, stats) {
   if (summary.positions.length > 0) {
     lines.push("### 当前实盘持仓");
     for (const p of summary.positions) {
-      lines.push(`- ${p.name}（${p.fund ? "场外基金 " : ""}${p.code}）：占权益 ${p.weight}%，${p.units} 个单位，信号 ${p.signal}，建仓 ${p.openedAt}，成本价 ${p.avgCost}，现价 ${p.price}，浮动 ${p.unrealizedR ?? "—"}R，止损 ${p.stop}（距现价 ${p.stopDistancePct}%${p.stopDistanceN !== null ? `，${p.stopDistanceN}N` : ""}）`);
+      const exCount = (state.trades.find((t) => t.id === p.tradeId)?.actions ?? []).filter((a) => a.applied).length;
+      lines.push(`- ${p.name}（${p.fund ? "场外基金 " : ""}${p.code}${exCount ? `，持有期间除权除息 ${exCount} 次，已按除权调整并计入收益` : ""}）：占权益 ${p.weight}%，${p.units} 个单位，信号 ${p.signal}，建仓 ${p.openedAt}，成本价 ${p.avgCost}，现价 ${p.price}，浮动 ${p.unrealizedR ?? "—"}R，止损 ${p.stop}（距现价 ${p.stopDistancePct}%${p.stopDistanceN !== null ? `，${p.stopDistanceN}N` : ""}）`);
     }
   }
   if (stats.n > 0) {
@@ -2770,7 +2949,7 @@ function describeScreen(s) {
 ${rows.join("\n")}`;
 }
 function describeContext(c) {
-  if (c.kind === "fund") return [describeFund(c.fund), describeFocus(c.focus), describeNews(c.news), describeAccount(c.account)].filter(Boolean).join("\n\n");
+  if (c.kind === "fund") return [describeFund(c.fund), c.dividendsText, describeFocus(c.focus), describeNews(c.news), describeAccount(c.account)].filter(Boolean).join("\n\n");
   if (c.kind === "screen") return [describeScreen(c.screen), describeAccount(c.account)].join("\n\n");
   if (c.kind === "general") {
     const idx = (c.indices ?? []).map((i) => `${i.name} ${fmt(i.price)}（${pct(i.pct)}）`).join("｜");
@@ -2781,6 +2960,7 @@ ${idx}`, ...(c.screens ?? []).map(describeScreen), describeAccount(c.account)].j
     `## 证券：${c.name}（${c.code}，${c.typeLabel}）`,
     describeQuote(c.quote),
     describeAnalysis(c.analysis),
+    c.dividendsText,
     describeFocus(c.focus),
     describeBars(c.bars),
     describeNews(c.news),
@@ -3053,6 +3233,9 @@ async function report(name2, code, sortColumn, pageSize = 30) {
 }
 var yi2 = (v) => v === null || v === void 0 ? "—" : Math.abs(v) >= 1e8 ? `${(v / 1e8).toFixed(2)} 亿` : `${(v / 1e4).toFixed(0)} 万`;
 var today = () => new Date(Date.now() + 8 * 36e5).toISOString().slice(0, 10);
+function bonusRecords(code) {
+  return report("RPT_SHAREBONUS_DET", code, "EX_DIVIDEND_DATE", 24);
+}
 async function stockEvents(code) {
   const now = today();
   const settle = (p) => p.catch(() => []);
@@ -3314,13 +3497,15 @@ async function createMarketService({ store, knowledge, getLlm, getAttachments = 
     for (const r of rows) map.set(r.secid, r);
     return map;
   }
+  const markRaw = (arr, raw) => raw ? Object.defineProperty(arr, "unadjusted", { value: true }) : arr;
   async function dailyBars(secid, limit2) {
     const key = `bars/${secid.replace(/[^A-Za-z0-9.-]/g, "_")}`;
     const record = await store.load(key, () => null);
+    const raw = record?.unadjusted === true;
     const today2 = beijingDate();
     const fresh = record !== null && record.limit >= limit2 && Date.now() - Date.parse(record.fullAt) < 7 * 864e5;
     if (fresh && record.checkedOn === today2 && !isMarketOpen(infoOf(secid).region === "cn" ? "cn" : infoOf(secid).region)) {
-      return record.bars.slice(-limit2);
+      return markRaw(record.bars.slice(-limit2), raw);
     }
     if (fresh) {
       try {
@@ -3330,17 +3515,33 @@ async function createMarketService({ store, knowledge, getLlm, getAttachments = 
         if (first && overlap && Math.abs(overlap.close / first.close - 1) < 5e-3) {
           const merged = [...record.bars.filter((b) => b.date < first.date), ...recent].slice(-Math.max(limit2, record.limit));
           store.save(key, { ...record, bars: merged, checkedOn: today2 });
-          return merged.slice(-limit2);
+          return markRaw(merged.slice(-limit2), raw);
         }
       } catch {
-        return record.bars.slice(-limit2);
+        return markRaw(record.bars.slice(-limit2), raw);
       }
     }
     const full = await kline4(secid, { period: "day", limit: limit2 });
     store.save(key, { secid, limit: limit2, bars: full.bars, fullAt: (/* @__PURE__ */ new Date()).toISOString(), checkedOn: today2, source: full.source, unadjusted: full.unadjusted === true });
-    return full.bars;
+    return markRaw(full.bars, full.unadjusted === true);
   }
-  const bars = (secid, limit2 = 1e3, ttl = 6e4) => cache.get(`bars:${secid}:${limit2}`, ttl, () => dailyBars(secid, limit2));
+  const bars = (secid, limit2 = 1e3, ttl = 6e4) => cache.get(`bars:${secid}:${limit2}`, ttl, async () => {
+    const series = await dailyBars(secid, limit2);
+    if (!series.unadjusted) return series;
+    const { actions } = await corporateActions(secid).catch(() => ({ actions: [] }));
+    return forwardAdjust(series, actions);
+  });
+  function corporateActions(secid) {
+    return cache.get(`corp:${secid}`, 6 * 36e5, async () => {
+      if (isFundSymbol(secid)) return { actions: fundDividends((await fund(secid.slice(FUND_PREFIX.length))).navs), planned: [] };
+      if (!isSecid(secid)) return { actions: [], planned: [] };
+      const info = classify(secid);
+      const code = secid.split(".")[1];
+      if (info.region === "cn" && info.kind === "stock") return parseBonusRecords(await bonusRecords(code));
+      if (info.region === "cn" && info.kind === "etf") return { actions: fundDividends((await fund(code)).navs), planned: [] };
+      return { actions: [], planned: [] };
+    });
+  }
   async function fund(code) {
     const detail = await cache.get(`fund:${code}`, 6e5, () => fundDetail(code));
     const holdings = await cache.get(`fundhold:${code}`, 36e5, async () => {
@@ -3390,7 +3591,16 @@ async function createMarketService({ store, knowledge, getLlm, getAttachments = 
       return analyzeBars(series, { equity, riskPct: config.riskPct, lot: buyLotRule(infoOf(symbol, q?.name ?? "")) });
     });
   }
+  async function applyPaperCorporate(ids) {
+    let changed = false;
+    for (const id of ids) {
+      const { actions } = await corporateActions(id).catch(() => ({ actions: [] }));
+      if (applyPaperActions(account, id, actions).length > 0) changed = true;
+    }
+    if (changed) store.save("paper", account);
+  }
   async function paperView() {
+    await applyPaperCorporate(Object.keys(account.positions));
     const secids = [...Object.keys(account.positions), ...account.orders.filter((o) => o.status === "pending").map((o) => o.secid)];
     const quotes4 = await quotesMap(secids).catch(() => /* @__PURE__ */ new Map());
     const filled = matchPending(account, (id) => quotes4.get(id), (id, name2) => classify(id, name2), { fees });
@@ -3407,6 +3617,7 @@ async function createMarketService({ store, knowledge, getLlm, getAttachments = 
   async function placeOrder2({ symbol, side, qty, type = "market", price, stop }) {
     const { symbol: secid } = await resolve(symbol);
     if (!isSecid(secid)) throw new ServiceError("paper.notTradable");
+    await applyPaperCorporate([secid]);
     const q = await quote2(secid);
     const info = classify(secid, q.name);
     const result = placeOrder(account, {
@@ -3607,11 +3818,19 @@ async function createMarketService({ store, knowledge, getLlm, getAttachments = 
       return { kind: "screen", screen: { ...job.result, presetLabel: symbol.slice(7) }, account: summary };
     }
     const [newsData, focus] = await Promise.all([news(symbol).catch(() => null), focusDate ? focusOf(symbol, focusDate).catch(() => null) : null]);
-    if (isFundSymbol(symbol)) return { kind: "fund", fund: await fund(symbol.slice(FUND_PREFIX.length)), account: summary, news: newsData, focus };
+    if (isFundSymbol(symbol)) {
+      const f = await fund(symbol.slice(FUND_PREFIX.length));
+      const divs2 = fundDividends(f.navs).slice(-6).reverse();
+      const dividendsText2 = divs2.length ? `### 分红
+近几次（按净值推算，每份税前）：${divs2.map((d) => `${d.exDate} 每份 ${d.cashPerShare} 元`).join("；")}。场外基金个人分红免税；可选现金分红或红利再投资。` : "### 分红\n近期没有分红记录。";
+      return { kind: "fund", fund: f, account: summary, news: newsData, focus, dividendsText: dividendsText2 };
+    }
     if (!isSecid(symbol)) throw new ServiceError("symbol.invalid");
-    const [q, a, series] = await Promise.all([quote3(symbol), analysis(symbol), bars(symbol)]);
+    const [q, a, series, divs] = await Promise.all([quote3(symbol), analysis(symbol), bars(symbol), corporateActions(symbol).catch(() => null)]);
     const info = infoOf(symbol, q.name);
+    const dividendsText = divs && (divs.actions.length || divs.planned.length) ? `${describeDividends(divs, q.price, beijingDate())}${info.kind === "stock" ? "\n个人红利税按持股期：1 个月内 20%，1 个月到 1 年 10%，1 年以上免税（卖出时扣）。" : ""}` : "";
     return {
+      dividendsText,
       kind: "security",
       name: q.name,
       code: q.code,
@@ -3808,7 +4027,16 @@ ${memory.items.map((i) => `- ${i.text}`).join("\n")}`;
   const liveState = await store.load("live", createLive);
   let liveUrgent = 0;
   let liveCheckedAt = 0;
+  async function applyLiveCorporate(ids) {
+    let changed = false;
+    for (const id of ids) {
+      const { actions } = await corporateActions(id).catch(() => ({ actions: [] }));
+      if (applyLiveActions(liveState, id, actions).length > 0) changed = true;
+    }
+    if (changed) store.save("live", liveState);
+  }
   async function liveSnapshot() {
+    await applyLiveCorporate(Object.keys(liveState.positions));
     const ids = Object.keys(liveState.positions);
     const quotes4 = await quotesMap(ids).catch(() => /* @__PURE__ */ new Map());
     await Promise.all(ids.filter(isFundSymbol).map(async (id) => {
@@ -3987,6 +4215,7 @@ ${memory.items.map((i) => `- ${i.text}`).join("\n")}`;
   }
   async function liveRecord(fill3) {
     const { id: secid, info, q } = await liveTarget(fill3.symbol);
+    await applyLiveCorporate([secid]);
     let n = fill3.n;
     if (fill3.side === "buy" && !(Number(n) > 0)) {
       const a = info.kind === "fund" ? await fundBars(secid).then((b) => analyzeBars(b), () => null) : await analysis(secid).catch(() => null);
@@ -3996,6 +4225,12 @@ ${memory.items.map((i) => `- ${i.text}`).join("\n")}`;
     if (!r.ok) throw new ServiceError(r.code, r.params ?? {});
     store.save("live", liveState);
     return { trade: r.trade, warnings: r.warnings, live: await liveView() };
+  }
+  async function liveSetDividendMode(symbol, mode) {
+    const r = setDividendMode(liveState, symbol, mode);
+    if (!r.ok) throw new ServiceError(r.code);
+    store.save("live", liveState);
+    return liveView();
   }
   async function liveSetStop(symbol, stop) {
     const r = setStop2(liveState, symbol, stop);
@@ -4238,6 +4473,8 @@ ${liveState.lessons.text}` : "";
     memoryAction,
     tick,
     live: liveView,
+    liveSetDividendMode,
+    corporateActions,
     livePlanPreview,
     liveAdopt,
     liveCapital,
@@ -4262,7 +4499,7 @@ ${liveState.lessons.text}` : "";
 
 // src/host/routes.js
 var API_PATH = "/stock-market/api";
-var VERSION = true ? "0.8.1" : "dev";
+var VERSION = true ? "0.9.0" : "dev";
 var MAX_BODY = 256 * 1024;
 var MAX_CHAT_BODY = 24 * 1024 * 1024;
 function sendJson(res, status2, body) {
@@ -4456,6 +4693,8 @@ function registerRoutes(ctx, ready, log) {
             return sendJson(res, 200, await service.liveCapital(body.amount));
           case "live/fill":
             return sendJson(res, 200, await service.liveRecord(body));
+          case "live/dividend-mode":
+            return sendJson(res, 200, await service.liveSetDividendMode(body.symbol, body.mode));
           case "live/stop":
             return sendJson(res, 200, await service.liveSetStop(body.symbol, body.stop));
           case "live/trade":
@@ -4590,7 +4829,7 @@ function toolSpecs(service) {
         if (action === "summary") return await service.liveContextText() || "用户还没有制定实盘资金计划。";
         if (action === "todos") {
           const v = await service.live();
-          return json(v.todos.map(({ qty: qty2, amount: amount2, ...rest }) => rest));
+          return json(v.todos.map(({ qty: qty2, amount: amount2, cash, qtyBefore, qtyAfter, reinvested, ...rest }) => rest));
         }
         if (symbol === void 0) throw new Error("action=plan 需要 symbol");
         const p = await service.livePlanTrade(symbol);
