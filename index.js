@@ -2609,7 +2609,8 @@ ${TEXT.roleSource}
 4. ${TEXT.roleViews}
 5. 关于"预测"：只给概率性情景。数据里有基于历史波动率的价格区间，以及这只证券自己历史上同类信号的统计，请据此说明可能性，不要给确定的点位预言。
 6. 注意 A 股约束：T+1、100 股一手（科创板 200 股起）、涨跌停、多数股票不能做空。场外基金按当天 15:00 后公布的净值申赎，没有盘中价格：用收盘净值判断信号，止损放在 3N（比股票多 1N 应对次日成交的滞后），持有不满 7 天赎回要付 1.5% 赎回费。不要因为没有盘中价就把场外基金排除在外，用户问基金时场外基金和 ETF 都要考虑。
-7. 数据里会附上近期新闻、公告与事件。解释涨跌原因时引用具体条目（时间 + 标题），分清"直接原因"和"可能相关"；没有抓到相关消息时如实说明，不要编造新闻。
+7. 用户消息开头附有关于用户的长期记忆和这个对话框里之前的全部对话（太长时较早部分是摘要）。回答要和之前说过的保持一致、接着之前的话题往下说；用户改了主意时以最新说法为准；行情以"当前数据"为准，不要沿用旧对话里的价格。
+   数据里会附上近期新闻、公告与事件。解释涨跌原因时引用具体条目（时间 + 标题），分清"直接原因"和"可能相关"；没有抓到相关消息时如实说明，不要编造新闻。
 8. 用户问"买哪些、推荐哪只"时，数据里会附上规则选股的候选清单：从清单里挑 3～5 只，逐只写出入选理由、入场方式、止损和仓位，并说明候选之间是否高度相关（同一指数或同一行业只选一只）。清单为空或没跑完时如实说明，并建议用户在"选股"页重新运行，不要编造代码。
 9. 默认 600 字以内，用户要求详细时可以展开。可以用 Markdown 的标题、列表和表格。
 10. 真实资金要格外谨慎。数据里附有"用户的实盘"（已脱敏，只有比例、R 倍数和价格）以及个人交易规则，回答前先看：
@@ -2786,20 +2787,63 @@ ${idx}`, ...(c.screens ?? []).map(describeScreen), describeAccount(c.account)].j
     describeAccount(c.account, c.position)
   ].filter(Boolean).join("\n\n");
 }
-function foldHistory(messages, { maxMessages = 12, maxChars = 8e3 } = {}) {
-  const recent = messages.slice(-maxMessages);
-  const lines = [];
-  let used = 0;
-  for (let i = recent.length - 1; i >= 0; i--) {
-    const m = recent[i];
-    const text2 = m.text.length > 1500 ? `${m.text.slice(0, 1500)}…` : m.text;
-    const files = m.attachments?.length ? `（附件：${m.attachments.map((a) => a.name).join("、")}）` : "";
-    const line = `【${m.role === "user" ? "用户" : "顾问"}】${text2}${files}`;
-    if (used + line.length > maxChars) break;
-    lines.unshift(line);
-    used += line.length;
+var HISTORY_BUDGET = 15e4;
+var RECENT_KEEP = 4e4;
+var RECENT_MIN_MESSAGES = 6;
+var messageLine = (m) => {
+  const files = m.attachments?.length ? `（附件：${m.attachments.map((a) => a.name).join("、")}）` : "";
+  return `【${m.role === "user" ? "用户" : "顾问"}】${m.text}${files}`;
+};
+var historyChars = (messages) => messages.reduce((n, m) => n + messageLine(m).length + 2, 0);
+function foldHistory(messages, { summary = null } = {}) {
+  const parts = [];
+  if (summary?.text) parts.push(`## 更早对话的摘要（前 ${summary.upto} 条消息已压缩，要点如下）
+
+${summary.text}`);
+  const recent = summary ? messages.slice(summary.upto) : messages;
+  if (recent.length > 0) parts.push(recent.map(messageLine).join("\n\n"));
+  return parts.join("\n\n");
+}
+function compactionCut(messages, from = 0, keepChars = RECENT_KEEP) {
+  let cut = messages.length;
+  let kept = 0;
+  while (cut > from) {
+    const len = messageLine(messages[cut - 1]).length + 2;
+    if (messages.length - cut >= RECENT_MIN_MESSAGES && kept + len > keepChars) break;
+    kept += len;
+    cut--;
   }
-  return lines.join("\n\n");
+  if (cut > from && messages[cut]?.role === "assistant") cut--;
+  return Math.max(from, cut);
+}
+var COMPACT_SYSTEM = "你负责整理一位个人投资者与 AI 交易顾问之间的对话记录，供顾问以后继续对话时参考。只根据给出的内容整理，不要编造，不要给新的建议。";
+function compactionPrompt(previousSummary, messages) {
+  const prev = previousSummary ? `# 之前已有的摘要
+
+${previousSummary}
+
+` : "";
+  return `${prev}# 需要压缩的对话
+
+${messages.map(messageLine).join("\n\n")}
+
+---
+
+请把"之前已有的摘要"和"需要压缩的对话"合并整理，严格按下面两节输出：
+
+## 对话摘要
+（3000 字以内的要点：用户的目标与资金情况、偏好与限制、讨论过的证券和基金及结论、顾问给过的建议（买卖倾向、止损、仓位）和后来的情况、还没解决的问题。保留关键数字、价格和日期。）
+
+## 长期记忆
+（用"- "逐条列出值得在所有对话里长期记住的用户信息：偏好、目标、风险承受、长期计划、用户明确要求记住的事。每条一句话，不写一次性的行情判断；没有就写"- 无"。）`;
+}
+function parseCompaction(text2) {
+  const t = String(text2 ?? "");
+  const memIdx = t.search(/^##\s*长期记忆/m);
+  const sumIdx = t.search(/^##\s*对话摘要/m);
+  const summary = (sumIdx >= 0 ? t.slice(sumIdx, memIdx > sumIdx ? memIdx : void 0) : memIdx >= 0 ? t.slice(0, memIdx) : t).replace(/^##\s*对话摘要\s*/m, "").trim();
+  const memories = memIdx >= 0 ? t.slice(memIdx).split("\n").slice(1).map((l) => l.replace(/^\s*[-*•]\s*/, "").trim()).filter((l) => l && l !== "无" && !/^（.*）$/.test(l)) : [];
+  return { summary, memories };
 }
 function buildSystemPrompt(knowledge) {
   return knowledge.lite ? `${ROLE}
@@ -2810,8 +2854,12 @@ ${knowledge.lite}` : `${ROLE}
 
 ${TEXT.kbMissing}`;
 }
-function buildUserMessage({ contextText, question, history, retrieved, attachmentsText = "" }) {
+function buildUserMessage({ contextText, question, history, retrieved, attachmentsText = "", memoryText = "" }) {
   const parts = [];
+  if (memoryText) parts.push(memoryText);
+  if (history) parts.push(`# 之前的对话（同一个对话框里的全部记录）
+
+${history}`);
   if (retrieved.length > 0) {
     parts.push(`${TEXT.retrievedHeading}
 
@@ -2821,9 +2869,6 @@ ${r.text}`).join("\n\n")}`);
   parts.push(`# 当前数据（${(/* @__PURE__ */ new Date()).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })}，北京时间）
 
 ${contextText}`);
-  if (history) parts.push(`# 之前的对话
-
-${history}`);
   if (attachmentsText) parts.push(attachmentsText);
   parts.push(`# 用户的新问题
 
@@ -3582,7 +3627,91 @@ async function createMarketService({ store, knowledge, getLlm, getAttachments = 
   }
   const chatKey = (symbol) => `chats/${symbol.replace(/[^A-Za-z0-9.-]/g, "_")}`;
   async function chatHistory(symbol) {
-    return (await store.load(chatKey(symbol), () => ({ symbol, messages: [] }))).messages;
+    const record = await store.load(chatKey(symbol), () => ({ symbol, messages: [] }));
+    const head = record.summary?.text ? [{ role: "summary", text: record.summary.text, upto: record.summary.upto, at: record.summary.at }] : [];
+    return [...head, ...record.messages.slice(-200)];
+  }
+  const MEMORY_MAX = 60;
+  const memory = await store.load("memory", () => ({ items: [] }));
+  const memoryId = () => `m${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+  function memoryView() {
+    return memory.items;
+  }
+  function memoryAdd(text2, source = "manual", from = null) {
+    const t = String(text2 ?? "").replace(/\s+/g, " ").trim().slice(0, 300);
+    if (t === "") throw new ServiceError("memory.empty");
+    if (memory.items.some((i) => i.text === t)) return memory.items;
+    if (memory.items.length >= MEMORY_MAX) {
+      const oldestAuto = memory.items.findIndex((i) => i.source === "auto");
+      if (source !== "auto" && oldestAuto < 0) throw new ServiceError("memory.full", { max: MEMORY_MAX });
+      if (oldestAuto < 0) return memory.items;
+      memory.items.splice(oldestAuto, 1);
+    }
+    memory.items.push({ id: memoryId(), text: t, source, from, at: (/* @__PURE__ */ new Date()).toISOString() });
+    store.save("memory", memory);
+    return memory.items;
+  }
+  function memoryRemove(id) {
+    memory.items = memory.items.filter((i) => i.id !== id);
+    store.save("memory", memory);
+    return memory.items;
+  }
+  function memoryAction({ action, id, text: text2 } = {}) {
+    if (action === "add") return memoryAdd(text2, "manual");
+    if (action === "remove") return memoryRemove(String(id ?? ""));
+    if (action === "clear") {
+      memory.items = [];
+      store.save("memory", memory);
+      return memory.items;
+    }
+    throw new ServiceError("memory.badAction");
+  }
+  function memoryText() {
+    if (memory.items.length === 0) return "";
+    return `# 关于用户的长期记忆（所有对话共用，回答时要记得并遵守；与当前数据冲突时以当前数据为准）
+
+${memory.items.map((i) => `- ${i.text}`).join("\n")}`;
+  }
+  const REMEMBER = /记住|记一下|帮我记|请记得|以后(都|请|别|不要|只)|今后(都|请|别|不要|只)/;
+  function rememberFromQuestion(q, symbol) {
+    if (REMEMBER.test(q)) {
+      try {
+        memoryAdd(q, "said", symbol);
+      } catch {
+      }
+    }
+  }
+  const compactions = /* @__PURE__ */ new Map();
+  const historyBudget = () => Number(config.historyBudget) > 0 ? Number(config.historyBudget) : HISTORY_BUDGET;
+  const recentKeep = () => Math.round(historyBudget() * 0.27);
+  function scheduleCompaction(symbol, record) {
+    const from = record.summary?.upto ?? 0;
+    if (compactions.has(symbol) || historyChars(record.messages.slice(from)) <= historyBudget()) return;
+    const run = (async () => {
+      const cut = compactionCut(record.messages, from, recentKeep());
+      if (cut <= from) return;
+      const llm = getLlm();
+      if (llm === void 0) return;
+      const text2 = await streamAnswer(llm, {
+        ...currentCall(),
+        reasoning: "auto",
+        system: COMPACT_SYSTEM,
+        user: compactionPrompt(record.summary?.text ?? "", record.messages.slice(from, cut)),
+        onDelta() {
+        }
+      });
+      const { summary, memories } = parseCompaction(text2);
+      if (summary === "") return;
+      record.summary = { text: summary, upto: cut, at: (/* @__PURE__ */ new Date()).toISOString() };
+      store.save(chatKey(symbol), record);
+      for (const m of memories) {
+        try {
+          memoryAdd(m, "auto", symbol);
+        } catch {
+        }
+      }
+    })().catch((error) => log.warn("对话压缩失败", error)).finally(() => compactions.delete(symbol));
+    compactions.set(symbol, run);
   }
   async function prepareAttachments(images, files, call) {
     const imgs = Array.isArray(images) ? images : [];
@@ -3638,13 +3767,22 @@ async function createMarketService({ store, knowledge, getLlm, getAttachments = 
         context.screens = await screensFor(wanted);
       }
     }
+    await compactions.get(symbol);
     const record = await store.load(chatKey(symbol), () => ({ symbol, messages: [] }));
+    rememberFromQuestion(q, symbol);
     const retrieved = knowledge.retrieve(`${q} ${context.name ?? ""}`);
     const liveText = await liveContextText().catch(() => "");
     const text2 = await streamAnswer(llm, {
       ...currentCall(),
       system: buildSystemPrompt(knowledge),
-      user: buildUserMessage({ contextText: [describeContext(context), liveText].filter(Boolean).join("\n\n"), question: q, history: foldHistory(record.messages), retrieved, attachmentsText: attached.text }),
+      user: buildUserMessage({
+        contextText: [describeContext(context), liveText].filter(Boolean).join("\n\n"),
+        question: q,
+        history: foldHistory(record.messages, { summary: record.summary }),
+        retrieved,
+        attachmentsText: attached.text,
+        memoryText: memoryText()
+      }),
       images: attached.refs,
       signal,
       onDelta,
@@ -3652,11 +3790,18 @@ async function createMarketService({ store, knowledge, getLlm, getAttachments = 
     });
     const at2 = (/* @__PURE__ */ new Date()).toISOString();
     record.messages.push({ role: "user", text: q, at: at2, ...attached.names.length ? { attachments: attached.names } : {} }, { role: "assistant", text: text2, at: at2, sources: retrieved.map((r) => `${r.source}·${r.title}`) });
-    if (record.messages.length > 80) record.messages.splice(0, record.messages.length - 80);
+    const excess = record.messages.length - 2e3;
+    if (excess > 0 && record.summary) {
+      const drop = Math.min(excess, record.summary.upto);
+      record.messages.splice(0, drop);
+      record.summary.upto -= drop;
+    }
     store.save(chatKey(symbol), record);
+    scheduleCompaction(symbol, record);
     return { text: text2, sources: retrieved.map((r) => `${r.source}·${r.title}`) };
   }
   async function chatClear(symbol) {
+    await compactions.get(symbol);
     await store.remove(chatKey(symbol));
     return [];
   }
@@ -3910,7 +4055,7 @@ ${liveState.lessons.text}` : "";
     const text2 = await streamAnswer(llm, {
       ...currentCall(),
       system: buildSystemPrompt(knowledge),
-      user: buildUserMessage({ contextText: data + previous, question, history: "", retrieved }),
+      user: buildUserMessage({ contextText: data + previous, question, history: "", retrieved, memoryText: memoryText() }),
       signal,
       onDelta,
       onThinking
@@ -4089,6 +4234,8 @@ ${liveState.lessons.text}` : "";
     chat,
     chatHistory,
     chatClear,
+    memory: memoryView,
+    memoryAction,
     tick,
     live: liveView,
     livePlanPreview,
@@ -4115,7 +4262,7 @@ ${liveState.lessons.text}` : "";
 
 // src/host/routes.js
 var API_PATH = "/stock-market/api";
-var VERSION = true ? "0.7.0" : "dev";
+var VERSION = true ? "0.8.0" : "dev";
 var MAX_BODY = 256 * 1024;
 var MAX_CHAT_BODY = 24 * 1024 * 1024;
 function sendJson(res, status2, body) {
@@ -4255,6 +4402,8 @@ function registerRoutes(ctx, ready, log) {
             return sendJson(res, 200, service.screenStatus(q.preset));
           case "chat/history":
             return sendJson(res, 200, await service.chatHistory(q.symbol));
+          case "memory":
+            return sendJson(res, 200, service.memory());
           case "ai/models":
             return sendJson(res, 200, await service.aiModels({ refresh: q.refresh === "1" }));
           case "live":
@@ -4284,6 +4433,8 @@ function registerRoutes(ctx, ready, log) {
             return sendJson(res, 200, service.startScreen(body.preset, { force: body.force === true }));
           case "chat":
             return streamSse(res, (opts) => service.chat(body, opts), log);
+          case "memory":
+            return sendJson(res, 200, service.memoryAction(body));
           case "ai/model":
             return sendJson(res, 200, await service.setAiModel(body));
           case "live/preview":

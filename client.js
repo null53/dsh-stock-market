@@ -135,6 +135,8 @@ var api = {
   chatHistory: (symbol) => get("chat/history", { symbol }),
   chatClear: (symbol) => post("chat/clear", { symbol }),
   chatStream: (body, opts) => sseStream("chat", body, opts),
+  memory: () => get("memory"),
+  memoryAction: (body) => post("memory", body),
   aiModels: (refresh) => get("ai/models", { refresh: refresh ? "1" : void 0 }),
   setAiModel: (body) => post("ai/model", body),
   live: (signal) => get("live", void 0, signal),
@@ -527,6 +529,14 @@ var CSS = `
 .sm-attach-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 260px; padding: 3px 8px; border: 1px solid var(--sm-line); border-radius: 8px; font-size: 12px; background: var(--sm-card); }
 .sm-attach-chip img { width: 40px; height: 40px; object-fit: cover; border-radius: 4px; }
 .sm-attach-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.sm-memory { margin: 0 0 10px; padding: 8px 10px; border: 1px solid var(--sm-line); border-radius: 8px; }
+.sm-memory-list { list-style: none; margin: 6px 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.sm-memory-list li { display: flex; gap: 8px; align-items: baseline; }
+.sm-memory-text { flex: 1; min-width: 0; }
+.sm-memory-add { display: flex; gap: 6px; }
+.sm-memory-add input { flex: 1; min-width: 0; }
+.sm-summary { margin: 4px 0; font-size: 13px; }
+.sm-summary summary { cursor: pointer; color: var(--dsw-alias-label-secondary); }
 /* 实盘 */
 .sm-panel > .sm-card + .sm-card, .sm-panel > .sm-card + .sm-form, .sm-panel .sm-form + .sm-hint { margin-top: 10px; }
 .sm-root input[type=text], .sm-root input[type=date] { font: inherit; color: var(--dsw-alias-label-primary); background: var(--sm-card); border: 1px solid var(--sm-line); border-radius: 6px; padding: 4px 8px; }
@@ -1139,6 +1149,44 @@ var QUICK = {
   screen: ["quick.screenPick", "quick.screenRisk"],
   general: ["quick.market", "quick.funds", "quick.stocks", "quick.live", "quick.portfolio", "quick.lesson"]
 };
+var memoryState = createSharedState(null);
+var memoryLoad = null;
+function loadMemory(api2, refresh = false) {
+  if (!refresh && memoryLoad) return memoryLoad;
+  memoryLoad = api2.memory().then((items) => {
+    memoryState.set(items);
+    return items;
+  }, (error) => {
+    memoryLoad = null;
+    throw error;
+  });
+  return memoryLoad;
+}
+async function memoryAction(api2, body) {
+  const items = await api2.memoryAction(body);
+  memoryState.set(items);
+  return items;
+}
+function MemoryPanel({ t, api: api2 }) {
+  const items = useShared(memoryState) ?? [];
+  const [draft, setDraft] = React4.useState("");
+  const [error, setError] = React4.useState(null);
+  const run = async (body) => {
+    setError(null);
+    try {
+      await memoryAction(api2, body);
+    } catch (err) {
+      setError(err);
+    }
+  };
+  return /* @__PURE__ */ React4.createElement("div", { className: "sm-memory" }, /* @__PURE__ */ React4.createElement("p", { className: "sm-hint" }, t("advisor.memoryHint")), items.length === 0 ? /* @__PURE__ */ React4.createElement("p", { className: "sm-muted" }, t("advisor.memoryEmpty")) : /* @__PURE__ */ React4.createElement("ul", { className: "sm-memory-list" }, items.map((i) => /* @__PURE__ */ React4.createElement("li", { key: i.id }, /* @__PURE__ */ React4.createElement("span", { className: "sm-memory-text" }, i.text), /* @__PURE__ */ React4.createElement("span", { className: "sm-muted sm-small" }, t(`advisor.memorySource.${i.source}`)), /* @__PURE__ */ React4.createElement("button", { type: "button", className: "sm-link", "aria-label": t("advisor.memoryRemove", { text: i.text.slice(0, 20) }), onClick: () => run({ action: "remove", id: i.id }) }, "×")))), /* @__PURE__ */ React4.createElement("form", { className: "sm-memory-add", onSubmit: (e) => {
+    e.preventDefault();
+    if (draft.trim()) {
+      run({ action: "add", text: draft });
+      setDraft("");
+    }
+  } }, /* @__PURE__ */ React4.createElement("input", { type: "text", value: draft, maxLength: 300, placeholder: t("advisor.memoryPlaceholder"), "aria-label": t("advisor.memoryPlaceholder"), onChange: (e) => setDraft(e.target.value) }), /* @__PURE__ */ React4.createElement("button", { type: "submit", className: "sm-btn sm-btn-sm", disabled: draft.trim() === "" }, t("advisor.memoryAdd"))), error && /* @__PURE__ */ React4.createElement("p", { className: "sm-error" }, errorText(t, error)));
+}
 function AttachmentList({ t, items, onRemove }) {
   return /* @__PURE__ */ React4.createElement("ul", { className: "sm-attach-list" }, items.map((a, i) => /* @__PURE__ */ React4.createElement("li", { key: a.id ?? i, className: "sm-attach-chip" }, a.kind === "image" && a.preview ? /* @__PURE__ */ React4.createElement("img", { src: a.preview, alt: "" }) : /* @__PURE__ */ React4.createElement("span", { "aria-hidden": "true" }, a.kind === "image" ? "🖼" : "📄"), /* @__PURE__ */ React4.createElement("span", { className: "sm-attach-name", title: a.name }, a.name), a.kind === "file" && a.chars !== void 0 && /* @__PURE__ */ React4.createElement("span", { className: "sm-muted sm-small" }, t("advisor.attachChars", { n: a.chars })), onRemove && /* @__PURE__ */ React4.createElement("button", { type: "button", className: "sm-link", "aria-label": t("advisor.attachRemove", { name: a.name }), onClick: () => onRemove(a.id) }, "×"))));
 }
@@ -1153,6 +1201,21 @@ function AdvisorChat({ t, api: api2, symbol, kind, title, startSession, aiReady,
   const listRef = React4.useRef(null);
   const sectionRef = React4.useRef(null);
   const fileRef = React4.useRef(null);
+  const memoryItems = useShared(memoryState);
+  const [showMemory, setShowMemory] = React4.useState(false);
+  const [remembered, setRemembered] = React4.useState({});
+  React4.useEffect(() => {
+    if (aiReady) loadMemory(api2).catch(() => {
+    });
+  }, [aiReady]);
+  const remember = async (m, i) => {
+    try {
+      await memoryAction(api2, { action: "add", text: m.text });
+      setRemembered((r) => ({ ...r, [i]: true }));
+    } catch (err) {
+      setError(err);
+    }
+  };
   const models = useShared(modelState);
   const currentModel = models?.models.find((m) => m.provider === models.current.provider && m.id === models.current.model);
   const canSeeImages = currentModel?.images !== false;
@@ -1229,8 +1292,11 @@ function AdvisorChat({ t, api: api2, symbol, kind, title, startSession, aiReady,
           if (ev.type === "delta") patchLast((last) => ({ ...last, text: last.text + ev.text, thinking: false, status: null }));
           else if (ev.type === "status") patchLast((last) => ({ ...last, status: ev }));
           else if (ev.type === "thinking") patchLast((last) => ({ ...last, thinking: true }));
-          else if (ev.type === "done") patchLast((last) => ({ ...last, pending: false, sources: ev.sources }));
-          else if (ev.type === "error") {
+          else if (ev.type === "done") {
+            patchLast((last) => ({ ...last, pending: false, sources: ev.sources }));
+            loadMemory(api2, true).catch(() => {
+            });
+          } else if (ev.type === "error") {
             setError({ code: ev.code, params: { message: ev.message } });
             patchLast((last) => ({ ...last, pending: false, failed: true }));
           }
@@ -1282,10 +1348,11 @@ function AdvisorChat({ t, api: api2, symbol, kind, title, startSession, aiReady,
         addFiles(e.dataTransfer?.files);
       }
     },
-    /* @__PURE__ */ React4.createElement("header", { className: "sm-card-head" }, /* @__PURE__ */ React4.createElement("h3", null, t("advisor.title")), /* @__PURE__ */ React4.createElement("span", { className: "sm-muted" }, t("advisor.subtitle")), /* @__PURE__ */ React4.createElement("span", { className: "sm-grow" }), startSession && /* @__PURE__ */ React4.createElement("button", { type: "button", className: "sm-btn sm-btn-ghost", onClick: toSession }, t("advisor.toSession")), messages.length > 0 && /* @__PURE__ */ React4.createElement("button", { type: "button", className: "sm-btn sm-btn-ghost", onClick: clear }, t("advisor.clear"))),
+    /* @__PURE__ */ React4.createElement("header", { className: "sm-card-head" }, /* @__PURE__ */ React4.createElement("h3", null, t("advisor.title")), /* @__PURE__ */ React4.createElement("span", { className: "sm-muted" }, t("advisor.subtitle")), /* @__PURE__ */ React4.createElement("span", { className: "sm-grow" }), aiReady && /* @__PURE__ */ React4.createElement("button", { type: "button", className: "sm-btn sm-btn-ghost", "aria-expanded": showMemory, onClick: () => setShowMemory((v) => !v) }, t("advisor.memory", { n: memoryItems?.length ?? 0 })), startSession && /* @__PURE__ */ React4.createElement("button", { type: "button", className: "sm-btn sm-btn-ghost", onClick: toSession }, t("advisor.toSession")), messages.length > 0 && /* @__PURE__ */ React4.createElement("button", { type: "button", className: "sm-btn sm-btn-ghost", onClick: clear }, t("advisor.clear"))),
     aiReady && /* @__PURE__ */ React4.createElement(ModelPicker, { t, api: api2, disabled: busy }),
+    aiReady && showMemory && /* @__PURE__ */ React4.createElement(MemoryPanel, { t, api: api2 }),
     !aiReady && /* @__PURE__ */ React4.createElement("p", { className: "sm-notice" }, t("advisor.unavailable")),
-    /* @__PURE__ */ React4.createElement("div", { className: "sm-chat", ref: listRef }, messages.length === 0 && /* @__PURE__ */ React4.createElement("p", { className: "sm-muted sm-chat-empty" }, t("advisor.empty")), messages.map((m, i) => /* @__PURE__ */ React4.createElement("div", { key: i, className: `sm-msg sm-msg-${m.role}` }, m.role === "user" ? /* @__PURE__ */ React4.createElement(React4.Fragment, null, /* @__PURE__ */ React4.createElement("p", null, m.text), m.attachments?.length > 0 && /* @__PURE__ */ React4.createElement(AttachmentList, { t, items: m.attachments })) : /* @__PURE__ */ React4.createElement(React4.Fragment, null, m.text === "" && m.pending ? /* @__PURE__ */ React4.createElement("p", { className: "sm-muted" }, m.thinking ? t("advisor.thinking") : m.status?.key === "screening" ? t("advisor.status.screening", { presets: (m.status.params?.presets ?? []).map((p) => t(`screen.${p}`)).join("、") }) : t("advisor.waiting")) : /* @__PURE__ */ React4.createElement(Markdown, { text: m.text }), m.sources?.length > 0 && /* @__PURE__ */ React4.createElement("details", { className: "sm-sources" }, /* @__PURE__ */ React4.createElement("summary", null, t("advisor.sources", { n: m.sources.length })), /* @__PURE__ */ React4.createElement("ul", null, m.sources.map((s) => /* @__PURE__ */ React4.createElement("li", { key: s }, s)))), !m.pending && /* @__PURE__ */ React4.createElement("div", { className: "sm-msg-meta" }, timeOf(m.at)))))),
+    /* @__PURE__ */ React4.createElement("div", { className: "sm-chat", ref: listRef }, messages.length === 0 && /* @__PURE__ */ React4.createElement("p", { className: "sm-muted sm-chat-empty" }, t("advisor.empty")), messages.map((m, i) => /* @__PURE__ */ React4.createElement("div", { key: i, className: `sm-msg sm-msg-${m.role}` }, m.role === "summary" ? /* @__PURE__ */ React4.createElement("details", { className: "sm-summary" }, /* @__PURE__ */ React4.createElement("summary", null, t("advisor.summaryTitle", { n: m.upto })), /* @__PURE__ */ React4.createElement(Markdown, { text: m.text })) : m.role === "user" ? /* @__PURE__ */ React4.createElement(React4.Fragment, null, /* @__PURE__ */ React4.createElement("p", null, m.text), m.attachments?.length > 0 && /* @__PURE__ */ React4.createElement(AttachmentList, { t, items: m.attachments }), aiReady && /* @__PURE__ */ React4.createElement("div", { className: "sm-msg-meta" }, remembered[i] ? /* @__PURE__ */ React4.createElement("span", null, t("advisor.remembered")) : /* @__PURE__ */ React4.createElement("button", { type: "button", className: "sm-link sm-small", title: t("advisor.rememberTip"), onClick: () => remember(m, i) }, t("advisor.remember")))) : /* @__PURE__ */ React4.createElement(React4.Fragment, null, m.text === "" && m.pending ? /* @__PURE__ */ React4.createElement("p", { className: "sm-muted" }, m.thinking ? t("advisor.thinking") : m.status?.key === "screening" ? t("advisor.status.screening", { presets: (m.status.params?.presets ?? []).map((p) => t(`screen.${p}`)).join("、") }) : t("advisor.waiting")) : /* @__PURE__ */ React4.createElement(Markdown, { text: m.text }), m.sources?.length > 0 && /* @__PURE__ */ React4.createElement("details", { className: "sm-sources" }, /* @__PURE__ */ React4.createElement("summary", null, t("advisor.sources", { n: m.sources.length })), /* @__PURE__ */ React4.createElement("ul", null, m.sources.map((s) => /* @__PURE__ */ React4.createElement("li", { key: s }, s)))), !m.pending && /* @__PURE__ */ React4.createElement("div", { className: "sm-msg-meta" }, timeOf(m.at)))))),
     error && /* @__PURE__ */ React4.createElement("p", { className: "sm-error", role: "alert" }, errorText(t, error)),
     /* @__PURE__ */ React4.createElement("div", { className: "sm-quick" }, (QUICK[kind] ?? QUICK.security).map((key) => /* @__PURE__ */ React4.createElement("button", { key, type: "button", className: "sm-chip", disabled: busy || !aiReady, onClick: () => ask(t(key)) }, t(key)))),
     attached.length > 0 && /* @__PURE__ */ React4.createElement("div", { className: "sm-attach-pending" }, /* @__PURE__ */ React4.createElement(AttachmentList, { t, items: attached, onRemove: removeAttached }), /* @__PURE__ */ React4.createElement("p", { className: "sm-hint" }, t("advisor.attachPrivacy"))),
@@ -2002,7 +2069,7 @@ function SearchBox({ t, api: api2, onSelect }) {
   } }, /* @__PURE__ */ React9.createElement("span", null, r.name), /* @__PURE__ */ React9.createElement("span", { className: "sm-muted" }, r.code), /* @__PURE__ */ React9.createElement("span", { className: "sm-tag" }, r.type)))));
 }
 var TABS = ["market", "watch", "live", "paper", "screen", "alerts", "advisor"];
-var CLIENT_VERSION = true ? "0.7.0" : "dev";
+var CLIENT_VERSION = true ? "0.8.0" : "dev";
 var Boundary = class extends React9.Component {
   constructor(props) {
     super(props);
@@ -2948,6 +3015,19 @@ var zhUi = {
   "screen.similar": "同类还有 {n} 只：{names}…",
   "screen.grouped": "，合并成 {n} 组",
   "screen.note": '规则选股只说明"符合这条规则"，不代表会上涨。成交额门槛：股票 1–2 亿、ETF 5000 万；排除 ST 与退市股。',
+  "advisor.memory": "记忆（{n}）",
+  "advisor.memoryHint": '所有 AI 顾问对话都会带上这些内容。你在对话里说"记住……""以后……"会自动记下；对话很长被整理成摘要时，AI 也会把值得长期记住的事加进来。',
+  "advisor.memoryEmpty": "还没有记忆。",
+  "advisor.memoryAdd": "添加",
+  "advisor.memoryPlaceholder": "例如：我主要做场外基金，单笔不超过 100 元",
+  "advisor.memoryRemove": '删除"{text}"',
+  "advisor.memorySource.manual": "手动添加",
+  "advisor.memorySource.said": "对话中说过",
+  "advisor.memorySource.auto": "自动整理",
+  "advisor.remember": "记住",
+  "advisor.rememberTip": "把这句话加进长期记忆，所有对话都会记得",
+  "advisor.remembered": "已记住",
+  "advisor.summaryTitle": "更早的 {n} 条对话已整理成摘要（AI 仍然记得这些要点）",
   "advisor.attach": "附加截图或文件",
   "advisor.attachTip": "附加截图或文本文件（也可以直接粘贴截图，或把文件拖进来）",
   "advisor.attachPrivacy": "截图和文件会原样发给模型：里面的金额、账号等信息模型也会看到，介意的话先打码。",
@@ -3024,6 +3104,9 @@ var zhUi = {
   "err.ai.unavailable": "AI 服务不可用：请确认 DSH 已登录 DeepSeek 账号",
   "err.ai.badModel": "这个模型现在不可用：{model}",
   "err.ai.badReasoning": "这个模型不支持推理强度 {reasoning}",
+  "err.memory.empty": "请输入要记住的内容",
+  "err.memory.full": "记忆已满（最多 {max} 条），请先删掉一些",
+  "err.memory.badAction": "记忆操作不正确",
   "err.ai.noImageModel": "当前模型 {model} 不能看图片：请在上方「模型」里换一个支持图片的模型（例如 DeepSeek-V4.1-Flash）",
   "err.ai.noAttachments": "这个 DSH 没有启用图片附件服务，暂时不能发送截图",
   "err.ai.imageRejected": "图片没能保存：{message}",
@@ -3349,6 +3432,19 @@ var enUi = {
   "screen.similar": "{n} near-identical: {names}…",
   "screen.grouped": ", grouped into {n}",
   "screen.note": "A match only means the rule is satisfied, not that the price will rise. Turnover floor: ¥100–200M for stocks, ¥50M for ETFs; ST and delisting stocks excluded.",
+  "advisor.memory": "Memory ({n})",
+  "advisor.memoryHint": 'Every AI advisor conversation includes these notes. Saying "remember…" or "from now on…" adds one automatically; when a long conversation is summarized, the AI also adds things worth remembering.',
+  "advisor.memoryEmpty": "Nothing remembered yet.",
+  "advisor.memoryAdd": "Add",
+  "advisor.memoryPlaceholder": "For example: I mainly trade mutual funds, at most 100 yuan per trade",
+  "advisor.memoryRemove": 'Delete "{text}"',
+  "advisor.memorySource.manual": "Added by you",
+  "advisor.memorySource.said": "Said in chat",
+  "advisor.memorySource.auto": "Summarized",
+  "advisor.remember": "Remember",
+  "advisor.rememberTip": "Add this to long-term memory for every conversation",
+  "advisor.remembered": "Remembered",
+  "advisor.summaryTitle": "The earlier {n} messages were summarized (the AI still remembers the key points)",
   "advisor.attach": "Attach a screenshot or file",
   "advisor.attachTip": "Attach screenshots or text files (you can also paste a screenshot or drop files here)",
   "advisor.attachPrivacy": "Screenshots and files are sent to the model as they are, including any amounts or account details; blur them first if needed.",
@@ -3425,6 +3521,9 @@ var enUi = {
   "err.ai.unavailable": "AI is unavailable: make sure DSH is signed in to DeepSeek",
   "err.ai.badModel": "This model is not available: {model}",
   "err.ai.badReasoning": "This model does not support reasoning level {reasoning}",
+  "err.memory.empty": "Enter something to remember",
+  "err.memory.full": "Memory is full ({max} notes at most); delete some first",
+  "err.memory.badAction": "Invalid memory action",
   "err.ai.noImageModel": "The current model {model} cannot read images; choose a model with image support above (for example DeepSeek-V4.1-Flash)",
   "err.ai.noAttachments": "This DSH has no image attachment service, so screenshots cannot be sent",
   "err.ai.imageRejected": "The image could not be saved: {message}",
