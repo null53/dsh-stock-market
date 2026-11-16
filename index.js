@@ -1845,29 +1845,46 @@ function createLive() {
     createdAt: (/* @__PURE__ */ new Date()).toISOString()
   };
 }
-var floorTo = (v, step) => Math.max(0, Math.floor(v / step) * step);
+function niceFloor(v) {
+  const n = Number(v) || 0;
+  const step = n >= 1e4 ? 1e3 : n >= 1e3 ? 100 : 10;
+  return Math.max(0, Math.floor(n / step) * step);
+}
+var FOCUS = ["fund", "stock", "both"];
 function capitalPlan(profile, rules = PLAN_RULES) {
   const reasons = [];
-  const assets = Math.max(0, Number(profile.assets) || 0);
-  const maxLoss = Math.max(0, Number(profile.maxLoss) || 0);
-  const expense = Math.max(0, Number(profile.monthlyExpense) || 0);
   const exp = EXPERIENCE[profile.experience] ? profile.experience : "none";
-  const emergency = profile.emergencySaved ? 0 : expense * rules.emergencyMonths;
-  if (emergency > 0) reasons.push({ key: "emergency", params: { months: rules.emergencyMonths, amount: round(emergency, 0) } });
-  const investable = Math.max(0, assets - emergency);
-  const byLoss = maxLoss / rules.expectedDrawdown;
-  reasons.push({ key: "byLoss", params: { loss: round(maxLoss, 0), dd: rules.expectedDrawdown * 100, cap: round(byLoss, 0) } });
-  const maxCapital = floorTo(Math.min(investable, byLoss), 1e3);
-  if (byLoss > investable && investable > 0) reasons.push({ key: "capByAssets", params: { investable: round(investable, 0) } });
+  const focus = FOCUS.includes(profile.focus) ? profile.focus : "both";
+  const practice = profile.mode === "practice";
   const e = EXPERIENCE[exp];
   let riskPerTrade = e.risk;
-  reasons.push({ key: `trial.${exp}`, params: { pct: e.trial * 100, risk: e.risk * 100 } });
-  if (profile.needIncome) {
-    riskPerTrade = Math.min(riskPerTrade, 5e-3);
-    reasons.push({ key: "income" });
+  let maxCapital;
+  let startCapital;
+  if (practice) {
+    startCapital = Math.max(0, Math.floor(Number(profile.practiceAmount) || 0));
+    maxCapital = startCapital;
+    if (startCapital > 0) reasons.push({ key: "practice", params: { amount: startCapital, risk: e.risk * 100, trades: rules.trialTrades } });
+  } else {
+    const assets = Math.max(0, Number(profile.assets) || 0);
+    const maxLoss = Math.max(0, Number(profile.maxLoss) || 0);
+    const expense = Math.max(0, Number(profile.monthlyExpense) || 0);
+    const emergency = profile.emergencySaved ? 0 : expense * rules.emergencyMonths;
+    if (emergency > 0) reasons.push({ key: "emergency", params: { months: rules.emergencyMonths, amount: round(emergency, 0) } });
+    const investable = Math.max(0, assets - emergency);
+    const byLoss = maxLoss / rules.expectedDrawdown;
+    reasons.push({ key: "byLoss", params: { loss: round(maxLoss, 0), dd: rules.expectedDrawdown * 100, cap: round(byLoss, 0) } });
+    maxCapital = niceFloor(Math.min(investable, byLoss));
+    if (byLoss > investable && investable > 0) reasons.push({ key: "capByAssets", params: { investable: round(investable, 0) } });
+    reasons.push({ key: `trial.${exp}`, params: { pct: e.trial * 100, risk: e.risk * 100 } });
+    if (profile.needIncome) {
+      riskPerTrade = Math.min(riskPerTrade, 5e-3);
+      reasons.push({ key: "income" });
+    }
+    startCapital = niceFloor(maxCapital * e.trial);
   }
-  const startCapital = floorTo(maxCapital * e.trial, 1e3);
-  if (startCapital > 0 && startCapital < 2e4) reasons.push({ key: "tooSmall", params: { amount: startCapital } });
+  if (startCapital > 0 && startCapital < 2e4) {
+    reasons.push({ key: focus === "fund" ? "smallFund" : focus === "stock" ? "smallStock" : "smallBoth", params: { amount: startCapital } });
+  }
   if (startCapital === 0) reasons.push({ key: "notReady" });
   reasons.push({ key: "guards", params: { open: rules.maxOpenRisk * 100, reduce: rules.reduceAt * 100, pause: rules.pauseAt * 100, trades: rules.trialTrades } });
   return {
@@ -1880,6 +1897,8 @@ function capitalPlan(profile, rules = PLAN_RULES) {
     pauseAt: rules.pauseAt,
     trialTrades: rules.trialTrades,
     experience: exp,
+    mode: practice ? "practice" : "normal",
+    focus,
     reasons
   };
 }
@@ -2173,7 +2192,7 @@ function computeTodos(state, ctx) {
       const trigger = round(p.lastAddPrice + n / 2, 3);
       const k = stopMultiple(fund);
       const rawQty = s.equity * plan.riskPerTrade / (k * n);
-      const amount = fund ? Math.floor(rawQty * p.price / 100) * 100 : null;
+      const amount = fund ? niceFloor(rawQty * p.price) : null;
       const unitQty = fund ? round(amount / p.price, 2) : Math.floor(rawQty / 100) * 100;
       const newStop = round(trigger - k * n, fund ? 4 : 3);
       const extraRisk = unitQty * (trigger - newStop);
@@ -2230,6 +2249,7 @@ function liveForAi(state, summary, stats) {
   if (!plan) return `${lines[0]}
 用户还没有制定实盘资金计划：涉及真钱时先建议在"实盘"页定好起步资金和单笔风险，不给实盘的具体仓位。`;
   lines.push(
+    `用途：${plan.mode === "practice" ? "小钱练手（金额很小，目的是练习按计划执行）" : "按资产规划"}；主要想做：${{ fund: "场外基金", stock: "股票和场内 ETF", both: "基金和股票都有" }[plan.focus ?? "both"]}`,
     `阶段：${plan.stage === "trial" ? `试用期（前 ${plan.trialTrades} 笔交易）` : "正常"}；单笔风险 ${round(plan.riskPerTrade * 100, 2)}%；总持仓风险上限 ${plan.maxOpenRisk * 100}%；回撤 ${plan.reduceAt * 100}% 时缩小规模、${plan.pauseAt * 100}% 时暂停复盘`,
     `账户：相对入金 ${summary.totalPnlPct ?? 0}%；距高点回撤 ${summary.drawdown}%；所有持仓打到止损的总风险占权益 ${summary.openRiskPct}%；现金占比 ${summary.equity > 0 ? round(summary.cash / summary.equity * 100, 1) : 100}%`,
     `护栏状态：${guardStatus(plan, summary)}`
@@ -2773,7 +2793,8 @@ function foldHistory(messages, { maxMessages = 12, maxChars = 8e3 } = {}) {
   for (let i = recent.length - 1; i >= 0; i--) {
     const m = recent[i];
     const text2 = m.text.length > 1500 ? `${m.text.slice(0, 1500)}…` : m.text;
-    const line = `【${m.role === "user" ? "用户" : "顾问"}】${text2}`;
+    const files = m.attachments?.length ? `（附件：${m.attachments.map((a) => a.name).join("、")}）` : "";
+    const line = `【${m.role === "user" ? "用户" : "顾问"}】${text2}${files}`;
     if (used + line.length > maxChars) break;
     lines.unshift(line);
     used += line.length;
@@ -2789,7 +2810,7 @@ ${knowledge.lite}` : `${ROLE}
 
 ${TEXT.kbMissing}`;
 }
-function buildUserMessage({ contextText, question, history, retrieved }) {
+function buildUserMessage({ contextText, question, history, retrieved, attachmentsText = "" }) {
   const parts = [];
   if (retrieved.length > 0) {
     parts.push(`${TEXT.retrievedHeading}
@@ -2803,6 +2824,7 @@ ${contextText}`);
   if (history) parts.push(`# 之前的对话
 
 ${history}`);
+  if (attachmentsText) parts.push(attachmentsText);
   parts.push(`# 用户的新问题
 
 ${question}`);
@@ -2813,8 +2835,8 @@ function pickReasoningEffort(reasoning, efforts) {
   return efforts.includes(reasoning) ? reasoning : void 0;
 }
 var MAX_CONTINUATIONS = 2;
-async function streamOnce(llm, { provider, model, maxTokens, reasoning, system, user, signal, onDelta, onThinking }) {
-  const messages = [{ role: "user", content: [{ type: "text", text: user }] }];
+async function streamOnce(llm, { provider, model, maxTokens, reasoning, system, user, images = [], signal, onDelta, onThinking }) {
+  const messages = [{ role: "user", content: [{ type: "text", text: user }, ...images.map((attachment) => ({ type: "image", attachment }))] }];
   const limit2 = Number(maxTokens) > 0 ? { maxTokens: Number(maxTokens) } : {};
   let stream;
   if (typeof llm.prepareCall === "function") {
@@ -3141,7 +3163,24 @@ var intIn = (v, min, max, dflt) => {
   const n = Number.parseInt(v, 10);
   return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : dflt;
 };
-async function createMarketService({ store, knowledge, getLlm, config, log }) {
+var ATTACH_LIMITS = { images: 4, imageBytes: 8 * 1024 * 1024, files: 5, fileChars: 6e4, totalFileChars: 15e4 };
+var IMAGE_TYPES = /* @__PURE__ */ new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
+function describeFiles(files) {
+  if (!files.length) return "";
+  const parts = files.map((f) => {
+    const cut = f.text.length > ATTACH_LIMITS.fileChars;
+    const body = cut ? f.text.slice(0, ATTACH_LIMITS.fileChars) : f.text;
+    return `## 文件：${f.name}${cut ? `（共 ${f.text.length} 字，只附上前 ${ATTACH_LIMITS.fileChars} 字）` : ""}
+
+\`\`\`
+${body}
+\`\`\``;
+  });
+  return `# 用户附上的文件（原样内容，可能包含金额等个人信息，只用于回答这个问题）
+
+${parts.join("\n\n")}`;
+}
+async function createMarketService({ store, knowledge, getLlm, getAttachments = () => void 0, config, log }) {
   const cache = createCache();
   const marketById = new Map(MARKETS.map((m) => [m.id, m]));
   const tracking = await store.load("tracking", createTracking);
@@ -3545,11 +3584,52 @@ async function createMarketService({ store, knowledge, getLlm, config, log }) {
   async function chatHistory(symbol) {
     return (await store.load(chatKey(symbol), () => ({ symbol, messages: [] }))).messages;
   }
-  async function chat({ symbol, question, focusDate }, { onDelta, onThinking, onStatus, signal }) {
+  async function prepareAttachments(images, files, call) {
+    const imgs = Array.isArray(images) ? images : [];
+    const docs = Array.isArray(files) ? files : [];
+    if (imgs.length > ATTACH_LIMITS.images) throw new ServiceError("ai.tooManyImages", { max: ATTACH_LIMITS.images });
+    if (docs.length > ATTACH_LIMITS.files) throw new ServiceError("ai.tooManyFiles", { max: ATTACH_LIMITS.files });
+    const cleanFiles = docs.map((f) => ({ name: String(f?.name ?? "文件").slice(0, 120), text: String(f?.text ?? "") }));
+    if (cleanFiles.reduce((s, f) => s + Math.min(f.text.length, ATTACH_LIMITS.fileChars), 0) > ATTACH_LIMITS.totalFileChars) {
+      throw new ServiceError("ai.filesTooLarge", { max: ATTACH_LIMITS.totalFileChars });
+    }
+    let refs = [];
+    if (imgs.length > 0) {
+      const decoded = imgs.map((i) => {
+        const mediaType = String(i?.mediaType ?? "");
+        if (!IMAGE_TYPES.has(mediaType) || typeof i?.data !== "string") throw new ServiceError("ai.badImage", { name: String(i?.name ?? "") });
+        const data = Buffer.from(i.data, "base64");
+        if (data.length === 0 || data.length > ATTACH_LIMITS.imageBytes) throw new ServiceError("ai.badImage", { name: String(i?.name ?? "") });
+        return { data, mediaType, name: String(i?.name ?? "image").slice(0, 120) };
+      });
+      const llm = getLlm();
+      const info = typeof llm?.resolveModelInfo === "function" ? await llm.resolveModelInfo(call.provider, call.model).catch(() => null) : null;
+      if (Array.isArray(info?.inputModalities) && !info.inputModalities.includes("image")) {
+        throw new ServiceError("ai.noImageModel", { model: info.name ?? call.model });
+      }
+      const attachments = getAttachments();
+      if (attachments === void 0 || typeof attachments.saveImages !== "function") throw new ServiceError("ai.noAttachments", {}, 503);
+      try {
+        refs = await attachments.saveImages(decoded);
+      } catch (error) {
+        throw new ServiceError("ai.imageRejected", { message: String(error?.message ?? error) });
+      }
+    }
+    const names = [
+      ...imgs.map((i) => ({ kind: "image", name: String(i?.name ?? "image").slice(0, 120) })),
+      ...cleanFiles.map((f) => ({ kind: "file", name: f.name }))
+    ];
+    const imageNote = refs.length ? `# 用户附上的图片
+
+用户附上了 ${refs.length} 张图片（${names.filter((n) => n.kind === "image").map((n) => n.name).join("、")}），见本消息末尾。先说清楚从图里读到了什么，再结合数据回答；看不清或无法判断的地方如实说明，不要猜。` : "";
+    return { refs, names, text: [imageNote, describeFiles(cleanFiles)].filter(Boolean).join("\n\n") };
+  }
+  async function chat({ symbol, question, focusDate, images, files }, { onDelta, onThinking, onStatus, signal }) {
     const llm = getLlm();
     if (llm === void 0) throw new ServiceError("ai.unavailable", {}, 503);
     const q = String(question ?? "").trim().slice(0, 4e3);
     if (q === "") throw new ServiceError("ai.emptyQuestion");
+    const attached = await prepareAttachments(images, files, currentCall());
     const context = await contextFor(symbol, { focusDate });
     if (context.kind === "general") {
       const wanted = screensForQuestion(q);
@@ -3564,13 +3644,14 @@ async function createMarketService({ store, knowledge, getLlm, config, log }) {
     const text2 = await streamAnswer(llm, {
       ...currentCall(),
       system: buildSystemPrompt(knowledge),
-      user: buildUserMessage({ contextText: [describeContext(context), liveText].filter(Boolean).join("\n\n"), question: q, history: foldHistory(record.messages), retrieved }),
+      user: buildUserMessage({ contextText: [describeContext(context), liveText].filter(Boolean).join("\n\n"), question: q, history: foldHistory(record.messages), retrieved, attachmentsText: attached.text }),
+      images: attached.refs,
       signal,
       onDelta,
       onThinking
     });
     const at2 = (/* @__PURE__ */ new Date()).toISOString();
-    record.messages.push({ role: "user", text: q, at: at2 }, { role: "assistant", text: text2, at: at2, sources: retrieved.map((r) => `${r.source}·${r.title}`) });
+    record.messages.push({ role: "user", text: q, at: at2, ...attached.names.length ? { attachments: attached.names } : {} }, { role: "assistant", text: text2, at: at2, sources: retrieved.map((r) => `${r.source}·${r.title}`) });
     if (record.messages.length > 80) record.messages.splice(0, record.messages.length - 80);
     store.save(chatKey(symbol), record);
     return { text: text2, sources: retrieved.map((r) => `${r.source}·${r.title}`) };
@@ -3691,8 +3772,8 @@ async function createMarketService({ store, knowledge, getLlm, config, log }) {
     if (isFund && n) add("fundStop", "info");
     if (plan && n && entry > stop && isFund) {
       const reduce = summary.drawdown <= -plan.reduceAt * 100 ? 0.8 : 1;
-      amount = Math.floor(summary.equity * plan.riskPerTrade / (entry - stop) * entry * reduce / 100) * 100;
-      const affordable = Math.floor(summary.cash / (1 + info.feeRate / 100) / 100) * 100;
+      amount = niceFloor(summary.equity * plan.riskPerTrade / (entry - stop) * entry * reduce);
+      const affordable = niceFloor(summary.cash / (1 + info.feeRate / 100));
       if (amount > affordable) {
         amount = affordable;
         add("cash", "warn");
@@ -3713,6 +3794,12 @@ async function createMarketService({ store, knowledge, getLlm, config, log }) {
         add("cash", "warn");
       }
       if (reduce < 1) add("reduced", "warn", { drawdown: summary.drawdown });
+    }
+    if (!isFund && qty > 0) {
+      const value = qty * entry;
+      const roundTrip = feesFor("buy", value, info).total + feesFor("sell", value, info).total;
+      const feePct = round(roundTrip / value * 100, 2);
+      if (feePct >= 1) add("feeHeavy", "warn", { pct: feePct });
     }
     if (!n) add("noN", "block");
     if (plan && summary.drawdown <= -plan.pauseAt * 100) add("paused", "block", { drawdown: summary.drawdown });
@@ -3874,6 +3961,10 @@ ${liveState.lessons.text}` : "";
         id: m.id,
         name: m.name,
         description: m.description ?? null,
+        images: (() => {
+          const mods = infos[i]?.inputModalities ?? m.inputModalities;
+          return Array.isArray(mods) ? mods.includes("image") : null;
+        })(),
         efforts: (infos[i]?.reasoning?.efforts ?? []).map((e) => ({ id: e.id, name: e.name, description: e.description ?? null })),
         defaultEffort: infos[i]?.reasoning?.defaultEffort ?? null
       }));
@@ -4024,8 +4115,9 @@ ${liveState.lessons.text}` : "";
 
 // src/host/routes.js
 var API_PATH = "/stock-market/api";
-var VERSION = true ? "0.6.5" : "dev";
+var VERSION = true ? "0.7.0" : "dev";
 var MAX_BODY = 256 * 1024;
+var MAX_CHAT_BODY = 24 * 1024 * 1024;
 function sendJson(res, status2, body) {
   res.statusCode = status2;
   res.setHeader("content-type", "application/json; charset=utf-8");
@@ -4040,13 +4132,13 @@ function sendError(res, error, log) {
   log.warn("请求失败", error);
   sendJson(res, 502, { error: { code: "upstream", params: { message: String(error?.message ?? error) } } });
 }
-function readJson(req) {
+function readJson(req, max = MAX_BODY) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let size = 0;
     req.on("data", (chunk) => {
       size += chunk.length;
-      if (size > MAX_BODY) {
+      if (size > max) {
         reject(new ServiceError("request.tooLarge", {}, 413));
         req.destroy();
         return;
@@ -4174,7 +4266,7 @@ function registerRoutes(ctx, ready, log) {
         }
       }
       if (req.method === "POST") {
-        const body = await readJson(req);
+        const body = await readJson(req, route === "chat" ? MAX_CHAT_BODY : MAX_BODY);
         switch (route) {
           case "watchlist":
             return sendJson(res, 200, await service.watch(body));
@@ -4481,11 +4573,18 @@ function apply(ctx, config = {}) {
       if (llm === sub.llm) llm = void 0;
     }, "stock-market: llm");
   });
+  let attachments;
+  ctx.inject(["attachments"], (sub) => {
+    attachments = sub.attachments;
+    sub.effect(() => () => {
+      if (attachments === sub.attachments) attachments = void 0;
+    }, "stock-market: attachments");
+  });
   const store = createStore(cfg.dataDir);
   const ready = (async () => {
     const knowledge = await loadKnowledge(knowledgeDirs({ configured: cfg.knowledgeDir, dshHome, home: homedir(), pluginDir, join: join3 }), KB_LAYOUT);
     if (knowledge.dir === null) log.warn(TEXT.missingKnowledgeLog);
-    return createMarketService({ store, knowledge, getLlm: () => llm, config: cfg, log });
+    return createMarketService({ store, knowledge, getLlm: () => llm, getAttachments: () => attachments, config: cfg, log });
   })();
   ready.catch((error) => log.warn("初始化失败", error));
   registerRoutes(ctx, ready, log);

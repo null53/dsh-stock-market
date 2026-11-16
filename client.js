@@ -519,6 +519,14 @@ var CSS = `
 @media (prefers-reduced-motion: reduce) { .sm-detail-inner > .sm-card:first-child { animation: none; } }
 .sm-model-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin: -2px 0 8px; }
 .sm-model-row select { max-width: 240px; }
+.sm-advisor.sm-dragging { outline: 2px dashed var(--sm-brand); outline-offset: -4px; }
+.sm-attach-btn { align-self: flex-end; font-size: 16px; padding: 4px 8px; }
+.sm-attach-pending { margin-top: 6px; }
+.sm-attach-pending .sm-hint { margin-top: 4px; }
+.sm-attach-list { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.sm-attach-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 260px; padding: 3px 8px; border: 1px solid var(--sm-line); border-radius: 8px; font-size: 12px; background: var(--sm-card); }
+.sm-attach-chip img { width: 40px; height: 40px; object-fit: cover; border-radius: 4px; }
+.sm-attach-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 /* 实盘 */
 .sm-panel > .sm-card + .sm-card, .sm-panel > .sm-card + .sm-form, .sm-panel .sm-form + .sm-hint { margin-top: 10px; }
 .sm-root input[type=text], .sm-root input[type=date] { font: inherit; color: var(--dsw-alias-label-primary); background: var(--sm-card); border: 1px solid var(--sm-line); border-radius: 6px; padding: 4px 8px; }
@@ -971,6 +979,93 @@ function Markdown({ text }) {
   return /* @__PURE__ */ React3.createElement("div", { className: "sm-md" }, blocks);
 }
 
+// src/client/attachments.js
+var LIMITS = { images: 4, files: 5, imageSourceBytes: 20 * 1024 * 1024, fileBytes: 2 * 1024 * 1024, maxEdge: 2048, keepBytes: 1.5 * 1024 * 1024 };
+var IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
+var TEXT_EXT = /\.(txt|csv|tsv|md|markdown|json|log|xml|html?|yaml|yml)$/i;
+var OFFICE_EXT = /\.(xlsx?|docx?|pptx?|pdf|numbers|pages|key|zip|rar|7z)$/i;
+var AttachError = class extends Error {
+  constructor(code, params = {}) {
+    super(code);
+    this.code = code;
+    this.params = params;
+  }
+};
+var toBase64 = (blob) => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => resolve(String(reader.result).replace(/^data:[^,]*,/, ""));
+  reader.onerror = () => reject(reader.error);
+  reader.readAsDataURL(blob);
+});
+var readBuffer = (blob) => typeof blob.arrayBuffer === "function" ? blob.arrayBuffer() : new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => resolve(reader.result);
+  reader.onerror = () => reject(reader.error);
+  reader.readAsArrayBuffer(blob);
+});
+function decodeText(buffer) {
+  const Decoder = globalThis.TextDecoder;
+  try {
+    return new Decoder("utf-8", { fatal: true }).decode(buffer).replace(/^﻿/, "");
+  } catch {
+    try {
+      return new Decoder("gb18030").decode(buffer);
+    } catch {
+      return new Decoder("utf-8").decode(buffer);
+    }
+  }
+}
+async function shrinkImage(file) {
+  const supported = IMAGE_TYPES.includes(file.type);
+  if (supported && file.size <= LIMITS.keepBytes) return { blob: file, mediaType: file.type };
+  const canDraw = typeof globalThis.createImageBitmap === "function" && typeof document !== "undefined";
+  if (!canDraw) {
+    if (supported) return { blob: file, mediaType: file.type };
+    throw new AttachError("ai.badImage", { name: file.name });
+  }
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, LIMITS.maxEdge / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    if (supported) return { blob: file, mediaType: file.type };
+    throw new AttachError("ai.badImage", { name: file.name });
+  }
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close?.();
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.9));
+  if (!blob) throw new AttachError("ai.badImage", { name: file.name });
+  return { blob, mediaType: "image/jpeg" };
+}
+async function readAttachment(file) {
+  const name = file.name || (file.type.startsWith("image/") ? "截图.png" : "文件");
+  if (file.type.startsWith("image/")) {
+    if (file.size > LIMITS.imageSourceBytes) throw new AttachError("ai.badImage", { name });
+    const { blob, mediaType } = await shrinkImage(file);
+    let preview = null;
+    try {
+      preview = typeof URL.createObjectURL === "function" ? URL.createObjectURL(blob) : null;
+    } catch {
+    }
+    return { kind: "image", name, mediaType, data: await toBase64(blob), bytes: blob.size, preview };
+  }
+  if (OFFICE_EXT.test(name)) throw new AttachError("ai.unsupportedFile", { name });
+  if (TEXT_EXT.test(name) || file.type.startsWith("text/") || file.type === "application/json") {
+    if (file.size > LIMITS.fileBytes) throw new AttachError("ai.fileTooLarge", { name, max: "2 MB" });
+    const text = decodeText(await readBuffer(file));
+    return { kind: "file", name, text, chars: text.length };
+  }
+  throw new AttachError("ai.unsupportedFile", { name });
+}
+function filesFromClipboard(event) {
+  const items = [...event.clipboardData?.items ?? []];
+  return items.filter((i) => i.kind === "file").map((i) => i.getAsFile()).filter(Boolean);
+}
+
 // src/client/advisor.jsx
 var modelState = createSharedState(null);
 var modelLoad = null;
@@ -1044,14 +1139,52 @@ var QUICK = {
   screen: ["quick.screenPick", "quick.screenRisk"],
   general: ["quick.market", "quick.funds", "quick.stocks", "quick.live", "quick.portfolio", "quick.lesson"]
 };
+function AttachmentList({ t, items, onRemove }) {
+  return /* @__PURE__ */ React4.createElement("ul", { className: "sm-attach-list" }, items.map((a, i) => /* @__PURE__ */ React4.createElement("li", { key: a.id ?? i, className: "sm-attach-chip" }, a.kind === "image" && a.preview ? /* @__PURE__ */ React4.createElement("img", { src: a.preview, alt: "" }) : /* @__PURE__ */ React4.createElement("span", { "aria-hidden": "true" }, a.kind === "image" ? "🖼" : "📄"), /* @__PURE__ */ React4.createElement("span", { className: "sm-attach-name", title: a.name }, a.name), a.kind === "file" && a.chars !== void 0 && /* @__PURE__ */ React4.createElement("span", { className: "sm-muted sm-small" }, t("advisor.attachChars", { n: a.chars })), onRemove && /* @__PURE__ */ React4.createElement("button", { type: "button", className: "sm-link", "aria-label": t("advisor.attachRemove", { name: a.name }), onClick: () => onRemove(a.id) }, "×"))));
+}
 function AdvisorChat({ t, api: api2, symbol, kind, title, startSession, aiReady, request: request2 }) {
   const [messages, setMessages] = React4.useState([]);
   const [draft, setDraft] = React4.useState("");
   const [busy, setBusy] = React4.useState(false);
   const [error, setError] = React4.useState(null);
+  const [attached, setAttached] = React4.useState([]);
+  const [dragging, setDragging] = React4.useState(false);
   const controllerRef = React4.useRef(null);
   const listRef = React4.useRef(null);
   const sectionRef = React4.useRef(null);
+  const fileRef = React4.useRef(null);
+  const models = useShared(modelState);
+  const currentModel = models?.models.find((m) => m.provider === models.current.provider && m.id === models.current.model);
+  const canSeeImages = currentModel?.images !== false;
+  const addFiles = async (list) => {
+    const files = [...list ?? []];
+    if (files.length === 0) return;
+    setError(null);
+    let next = attached;
+    for (const file of files) {
+      const isImage = file.type.startsWith("image/");
+      if (isImage && !canSeeImages) {
+        setError({ code: "ai.noImageModel", params: { model: currentModel?.name ?? "" } });
+        continue;
+      }
+      if (isImage && next.filter((a) => a.kind === "image").length >= LIMITS.images) {
+        setError({ code: "ai.tooManyImages", params: { max: LIMITS.images } });
+        continue;
+      }
+      if (!isImage && next.filter((a) => a.kind === "file").length >= LIMITS.files) {
+        setError({ code: "ai.tooManyFiles", params: { max: LIMITS.files } });
+        continue;
+      }
+      try {
+        const item = await readAttachment(file);
+        next = [...next, { ...item, id: `${Date.now()}-${Math.random()}` }];
+        setAttached(next);
+      } catch (err) {
+        setError(err.code ? err : { code: "ai.badImage", params: { name: file.name } });
+      }
+    }
+  };
+  const removeAttached = (id) => setAttached((list) => list.filter((a) => a.id !== id));
   React4.useEffect(() => {
     let alive = true;
     setMessages([]);
@@ -1070,22 +1203,27 @@ function AdvisorChat({ t, api: api2, symbol, kind, title, startSession, aiReady,
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages]);
   const ask = async (question, focusDate) => {
-    const q = question.trim();
+    const sending = attached;
+    const q = question.trim() || (sending.length ? t("advisor.attachDefaultQ") : "");
     if (q === "" || busy) return;
     setDraft("");
+    setAttached([]);
     setError(null);
     setBusy(true);
     const controller = new AbortController();
     controllerRef.current = controller;
     const at = (/* @__PURE__ */ new Date()).toISOString();
-    setMessages((m) => [...m, { role: "user", text: q, at }, { role: "assistant", text: "", at, pending: true }]);
+    const shown = sending.map((a) => ({ kind: a.kind, name: a.name, preview: a.preview }));
+    setMessages((m) => [...m, { role: "user", text: q, at, attachments: shown }, { role: "assistant", text: "", at, pending: true }]);
     const patchLast = (fn) => setMessages((m) => {
       const copy = m.slice();
       copy[copy.length - 1] = fn(copy[copy.length - 1]);
       return copy;
     });
     try {
-      await api2.chatStream({ symbol, question: q, focusDate }, {
+      const images = sending.filter((a) => a.kind === "image").map((a) => ({ name: a.name, mediaType: a.mediaType, data: a.data }));
+      const files = sending.filter((a) => a.kind === "file").map((a) => ({ name: a.name, text: a.text }));
+      await api2.chatStream({ symbol, question: q, focusDate, ...images.length ? { images } : {}, ...files.length ? { files } : {} }, {
         signal: controller.signal,
         onEvent: (ev) => {
           if (ev.type === "delta") patchLast((last) => ({ ...last, text: last.text + ev.text, thinking: false, status: null }));
@@ -1122,26 +1260,78 @@ function AdvisorChat({ t, api: api2, symbol, kind, title, startSession, aiReady,
     const q = draft.trim() || [...messages].reverse().find((m) => m.role === "user")?.text || t("quick.canBuy");
     if (startSession(t("advisor.sessionPrompt", { title, symbol, question: q })) === false) setError({ code: "session.unavailable" });
   };
-  return /* @__PURE__ */ React4.createElement("section", { ref: sectionRef, className: "sm-card sm-advisor", "aria-label": t("advisor.title") }, /* @__PURE__ */ React4.createElement("header", { className: "sm-card-head" }, /* @__PURE__ */ React4.createElement("h3", null, t("advisor.title")), /* @__PURE__ */ React4.createElement("span", { className: "sm-muted" }, t("advisor.subtitle")), /* @__PURE__ */ React4.createElement("span", { className: "sm-grow" }), startSession && /* @__PURE__ */ React4.createElement("button", { type: "button", className: "sm-btn sm-btn-ghost", onClick: toSession }, t("advisor.toSession")), messages.length > 0 && /* @__PURE__ */ React4.createElement("button", { type: "button", className: "sm-btn sm-btn-ghost", onClick: clear }, t("advisor.clear"))), aiReady && /* @__PURE__ */ React4.createElement(ModelPicker, { t, api: api2, disabled: busy }), !aiReady && /* @__PURE__ */ React4.createElement("p", { className: "sm-notice" }, t("advisor.unavailable")), /* @__PURE__ */ React4.createElement("div", { className: "sm-chat", ref: listRef }, messages.length === 0 && /* @__PURE__ */ React4.createElement("p", { className: "sm-muted sm-chat-empty" }, t("advisor.empty")), messages.map((m, i) => /* @__PURE__ */ React4.createElement("div", { key: i, className: `sm-msg sm-msg-${m.role}` }, m.role === "user" ? /* @__PURE__ */ React4.createElement("p", null, m.text) : /* @__PURE__ */ React4.createElement(React4.Fragment, null, m.text === "" && m.pending ? /* @__PURE__ */ React4.createElement("p", { className: "sm-muted" }, m.thinking ? t("advisor.thinking") : m.status?.key === "screening" ? t("advisor.status.screening", { presets: (m.status.params?.presets ?? []).map((p) => t(`screen.${p}`)).join("、") }) : t("advisor.waiting")) : /* @__PURE__ */ React4.createElement(Markdown, { text: m.text }), m.sources?.length > 0 && /* @__PURE__ */ React4.createElement("details", { className: "sm-sources" }, /* @__PURE__ */ React4.createElement("summary", null, t("advisor.sources", { n: m.sources.length })), /* @__PURE__ */ React4.createElement("ul", null, m.sources.map((s) => /* @__PURE__ */ React4.createElement("li", { key: s }, s)))), !m.pending && /* @__PURE__ */ React4.createElement("div", { className: "sm-msg-meta" }, timeOf(m.at)))))), error && /* @__PURE__ */ React4.createElement("p", { className: "sm-error", role: "alert" }, errorText(t, error)), /* @__PURE__ */ React4.createElement("div", { className: "sm-quick" }, (QUICK[kind] ?? QUICK.security).map((key) => /* @__PURE__ */ React4.createElement("button", { key, type: "button", className: "sm-chip", disabled: busy || !aiReady, onClick: () => ask(t(key)) }, t(key)))), /* @__PURE__ */ React4.createElement("form", { className: "sm-chat-input", onSubmit: (e) => {
-    e.preventDefault();
-    ask(draft);
-  } }, /* @__PURE__ */ React4.createElement(
-    "textarea",
+  return /* @__PURE__ */ React4.createElement(
+    "section",
     {
-      value: draft,
-      onChange: (e) => setDraft(e.target.value),
-      onKeyDown: (e) => {
-        if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+      ref: sectionRef,
+      className: `sm-card sm-advisor ${dragging ? "sm-dragging" : ""}`,
+      "aria-label": t("advisor.title"),
+      onDragOver: (e) => {
+        if (aiReady && [...e.dataTransfer?.types ?? []].includes("Files")) {
           e.preventDefault();
-          ask(draft);
+          setDragging(true);
         }
       },
-      placeholder: t("advisor.placeholder"),
-      "aria-label": t("advisor.placeholder"),
-      rows: 2,
-      disabled: !aiReady
-    }
-  ), busy ? /* @__PURE__ */ React4.createElement("button", { type: "button", className: "sm-btn", onClick: stop }, t("advisor.stop")) : /* @__PURE__ */ React4.createElement("button", { type: "submit", className: "sm-btn sm-btn-primary", disabled: !aiReady || draft.trim() === "" }, t("advisor.send"))), /* @__PURE__ */ React4.createElement("p", { className: "sm-disclaimer" }, t("advisor.disclaimer")));
+      onDragLeave: (e) => {
+        if (e.currentTarget === e.target) setDragging(false);
+      },
+      onDrop: (e) => {
+        if (!aiReady) return;
+        e.preventDefault();
+        setDragging(false);
+        addFiles(e.dataTransfer?.files);
+      }
+    },
+    /* @__PURE__ */ React4.createElement("header", { className: "sm-card-head" }, /* @__PURE__ */ React4.createElement("h3", null, t("advisor.title")), /* @__PURE__ */ React4.createElement("span", { className: "sm-muted" }, t("advisor.subtitle")), /* @__PURE__ */ React4.createElement("span", { className: "sm-grow" }), startSession && /* @__PURE__ */ React4.createElement("button", { type: "button", className: "sm-btn sm-btn-ghost", onClick: toSession }, t("advisor.toSession")), messages.length > 0 && /* @__PURE__ */ React4.createElement("button", { type: "button", className: "sm-btn sm-btn-ghost", onClick: clear }, t("advisor.clear"))),
+    aiReady && /* @__PURE__ */ React4.createElement(ModelPicker, { t, api: api2, disabled: busy }),
+    !aiReady && /* @__PURE__ */ React4.createElement("p", { className: "sm-notice" }, t("advisor.unavailable")),
+    /* @__PURE__ */ React4.createElement("div", { className: "sm-chat", ref: listRef }, messages.length === 0 && /* @__PURE__ */ React4.createElement("p", { className: "sm-muted sm-chat-empty" }, t("advisor.empty")), messages.map((m, i) => /* @__PURE__ */ React4.createElement("div", { key: i, className: `sm-msg sm-msg-${m.role}` }, m.role === "user" ? /* @__PURE__ */ React4.createElement(React4.Fragment, null, /* @__PURE__ */ React4.createElement("p", null, m.text), m.attachments?.length > 0 && /* @__PURE__ */ React4.createElement(AttachmentList, { t, items: m.attachments })) : /* @__PURE__ */ React4.createElement(React4.Fragment, null, m.text === "" && m.pending ? /* @__PURE__ */ React4.createElement("p", { className: "sm-muted" }, m.thinking ? t("advisor.thinking") : m.status?.key === "screening" ? t("advisor.status.screening", { presets: (m.status.params?.presets ?? []).map((p) => t(`screen.${p}`)).join("、") }) : t("advisor.waiting")) : /* @__PURE__ */ React4.createElement(Markdown, { text: m.text }), m.sources?.length > 0 && /* @__PURE__ */ React4.createElement("details", { className: "sm-sources" }, /* @__PURE__ */ React4.createElement("summary", null, t("advisor.sources", { n: m.sources.length })), /* @__PURE__ */ React4.createElement("ul", null, m.sources.map((s) => /* @__PURE__ */ React4.createElement("li", { key: s }, s)))), !m.pending && /* @__PURE__ */ React4.createElement("div", { className: "sm-msg-meta" }, timeOf(m.at)))))),
+    error && /* @__PURE__ */ React4.createElement("p", { className: "sm-error", role: "alert" }, errorText(t, error)),
+    /* @__PURE__ */ React4.createElement("div", { className: "sm-quick" }, (QUICK[kind] ?? QUICK.security).map((key) => /* @__PURE__ */ React4.createElement("button", { key, type: "button", className: "sm-chip", disabled: busy || !aiReady, onClick: () => ask(t(key)) }, t(key)))),
+    attached.length > 0 && /* @__PURE__ */ React4.createElement("div", { className: "sm-attach-pending" }, /* @__PURE__ */ React4.createElement(AttachmentList, { t, items: attached, onRemove: removeAttached }), /* @__PURE__ */ React4.createElement("p", { className: "sm-hint" }, t("advisor.attachPrivacy"))),
+    /* @__PURE__ */ React4.createElement("form", { className: "sm-chat-input", onSubmit: (e) => {
+      e.preventDefault();
+      ask(draft);
+    } }, /* @__PURE__ */ React4.createElement(
+      "input",
+      {
+        ref: fileRef,
+        type: "file",
+        multiple: true,
+        hidden: true,
+        accept: "image/*,.txt,.csv,.tsv,.md,.json,.log",
+        "aria-label": t("advisor.attach"),
+        onChange: (e) => {
+          addFiles(e.target.files);
+          e.target.value = "";
+        }
+      }
+    ), /* @__PURE__ */ React4.createElement("button", { type: "button", className: "sm-btn sm-btn-ghost sm-attach-btn", title: t("advisor.attachTip"), "aria-label": t("advisor.attach"), disabled: !aiReady || busy, onClick: () => fileRef.current?.click() }, "📎"), /* @__PURE__ */ React4.createElement(
+      "textarea",
+      {
+        value: draft,
+        onPaste: (e) => {
+          const files = filesFromClipboard(e);
+          if (files.length > 0) {
+            e.preventDefault();
+            addFiles(files);
+          }
+        },
+        onChange: (e) => setDraft(e.target.value),
+        onKeyDown: (e) => {
+          if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+            e.preventDefault();
+            ask(draft);
+          }
+        },
+        placeholder: t("advisor.placeholder"),
+        "aria-label": t("advisor.placeholder"),
+        rows: 2,
+        disabled: !aiReady
+      }
+    ), busy ? /* @__PURE__ */ React4.createElement("button", { type: "button", className: "sm-btn", onClick: stop }, t("advisor.stop")) : /* @__PURE__ */ React4.createElement("button", { type: "submit", className: "sm-btn sm-btn-primary", disabled: !aiReady || draft.trim() === "" && attached.length === 0 }, t("advisor.send"))),
+    /* @__PURE__ */ React4.createElement("p", { className: "sm-disclaimer" }, t("advisor.disclaimer"))
+  );
 }
 
 // src/client/news.jsx
@@ -1498,13 +1688,29 @@ function Field({ label, children, hint }) {
   return /* @__PURE__ */ React8.createElement("label", { className: "sm-field" }, /* @__PURE__ */ React8.createElement("span", null, label), children, hint && /* @__PURE__ */ React8.createElement("small", { className: "sm-muted" }, hint));
 }
 function PlanWizard({ t, api: api2, onAdopted, initial }) {
-  const [form, setForm] = React8.useState(initial ?? { assets: "", monthlyExpense: "", emergencySaved: false, maxLoss: "", experience: "none", needIncome: false });
+  const [form, setForm] = React8.useState({
+    mode: "practice",
+    practiceAmount: "",
+    focus: "fund",
+    assets: "",
+    monthlyExpense: "",
+    emergencySaved: false,
+    maxLoss: "",
+    experience: "none",
+    needIncome: false,
+    ...initial ?? {}
+  });
   const [plan, setPlan] = React8.useState(null);
   const [start, setStart] = React8.useState("");
   const [risk, setRisk] = React8.useState("");
   const [error, setError] = React8.useState(null);
-  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
-  const profile = () => ({ ...form, assets: Number(form.assets) || 0, monthlyExpense: Number(form.monthlyExpense) || 0, maxLoss: Number(form.maxLoss) || 0 });
+  const set = (k, v) => {
+    setForm((f) => ({ ...f, [k]: v }));
+    setPlan(null);
+  };
+  const num = (v) => Number(v) || 0;
+  const profile = () => ({ ...form, assets: num(form.assets), monthlyExpense: num(form.monthlyExpense), maxLoss: num(form.maxLoss), practiceAmount: num(form.practiceAmount) });
+  const practice = form.mode === "practice";
   const preview = async (e) => {
     e.preventDefault();
     setError(null);
@@ -1526,7 +1732,7 @@ function PlanWizard({ t, api: api2, onAdopted, initial }) {
       setError(err);
     }
   };
-  return /* @__PURE__ */ React8.createElement("div", { className: "sm-panel" }, /* @__PURE__ */ React8.createElement("section", { className: "sm-card" }, /* @__PURE__ */ React8.createElement("header", { className: "sm-card-head" }, /* @__PURE__ */ React8.createElement("h3", null, t("live.wizard.title"))), /* @__PURE__ */ React8.createElement("p", { className: "sm-hint" }, t("live.wizard.intro")), /* @__PURE__ */ React8.createElement("form", { className: "sm-form-grid", onSubmit: preview }, /* @__PURE__ */ React8.createElement(Field, { label: t("live.f.assets"), hint: t("live.f.assetsHint") }, /* @__PURE__ */ React8.createElement("input", { type: "number", min: "0", step: "1000", required: true, value: form.assets, onChange: (e) => set("assets", e.target.value) })), /* @__PURE__ */ React8.createElement(Field, { label: t("live.f.expense") }, /* @__PURE__ */ React8.createElement("input", { type: "number", min: "0", step: "100", value: form.monthlyExpense, onChange: (e) => set("monthlyExpense", e.target.value) })), /* @__PURE__ */ React8.createElement(Field, { label: t("live.f.maxLoss"), hint: t("live.f.maxLossHint") }, /* @__PURE__ */ React8.createElement("input", { type: "number", min: "0", step: "1000", required: true, value: form.maxLoss, onChange: (e) => set("maxLoss", e.target.value) })), /* @__PURE__ */ React8.createElement(Field, { label: t("live.f.experience") }, /* @__PURE__ */ React8.createElement("select", { value: form.experience, onChange: (e) => set("experience", e.target.value) }, ["none", "some", "experienced"].map((k) => /* @__PURE__ */ React8.createElement("option", { key: k, value: k }, t(`live.exp.${k}`))))), /* @__PURE__ */ React8.createElement("label", { className: "sm-check" }, /* @__PURE__ */ React8.createElement("input", { type: "checkbox", checked: form.emergencySaved, onChange: (e) => set("emergencySaved", e.target.checked) }), t("live.f.emergency")), /* @__PURE__ */ React8.createElement("label", { className: "sm-check" }, /* @__PURE__ */ React8.createElement("input", { type: "checkbox", checked: form.needIncome, onChange: (e) => set("needIncome", e.target.checked) }), t("live.f.income")), /* @__PURE__ */ React8.createElement("div", { className: "sm-form-actions" }, /* @__PURE__ */ React8.createElement("button", { type: "submit", className: "sm-btn sm-btn-primary" }, t("live.wizard.calc")))), error && /* @__PURE__ */ React8.createElement("p", { className: "sm-error", role: "alert" }, errorText(t, error))), plan && /* @__PURE__ */ React8.createElement("section", { className: "sm-card" }, /* @__PURE__ */ React8.createElement("header", { className: "sm-card-head" }, /* @__PURE__ */ React8.createElement("h3", null, t("live.plan.title"))), /* @__PURE__ */ React8.createElement("div", { className: "sm-grid-stats sm-grid-wide" }, /* @__PURE__ */ React8.createElement("div", { className: "sm-stat" }, /* @__PURE__ */ React8.createElement("span", { className: "sm-stat-label" }, t("live.plan.max")), /* @__PURE__ */ React8.createElement("span", { className: "sm-stat-value" }, money(plan.maxCapital))), /* @__PURE__ */ React8.createElement("div", { className: "sm-stat" }, /* @__PURE__ */ React8.createElement("span", { className: "sm-stat-label" }, t("live.plan.start")), /* @__PURE__ */ React8.createElement("span", { className: "sm-stat-value sm-up" }, money(plan.startCapital))), /* @__PURE__ */ React8.createElement("div", { className: "sm-stat" }, /* @__PURE__ */ React8.createElement("span", { className: "sm-stat-label" }, t("live.plan.risk")), /* @__PURE__ */ React8.createElement("span", { className: "sm-stat-value" }, (plan.riskPerTrade * 100).toFixed(2), "%")), /* @__PURE__ */ React8.createElement("div", { className: "sm-stat" }, /* @__PURE__ */ React8.createElement("span", { className: "sm-stat-label" }, t("live.plan.perTrade")), /* @__PURE__ */ React8.createElement("span", { className: "sm-stat-value" }, money(plan.startCapital * plan.riskPerTrade)))), /* @__PURE__ */ React8.createElement("ul", { className: "sm-reasons" }, plan.reasons.map((r, i) => /* @__PURE__ */ React8.createElement("li", { key: i, className: "sm-reason-neutral" }, /* @__PURE__ */ React8.createElement("span", { className: "sm-reason-dot", "aria-hidden": "true" }), t(`live.plan.r.${r.key}`, r.params)))), /* @__PURE__ */ React8.createElement("div", { className: "sm-form-row" }, /* @__PURE__ */ React8.createElement(Field, { label: t("live.plan.adjustStart") }, /* @__PURE__ */ React8.createElement("input", { type: "number", min: "0", step: "1000", value: start, onChange: (e) => setStart(e.target.value) })), /* @__PURE__ */ React8.createElement(Field, { label: t("live.plan.adjustRisk") }, /* @__PURE__ */ React8.createElement("select", { value: risk, onChange: (e) => setRisk(e.target.value) }, ["0.0025", "0.005", "0.0075", "0.01", "0.015"].map((v) => /* @__PURE__ */ React8.createElement("option", { key: v, value: v }, (Number(v) * 100).toFixed(2), "%"))))), /* @__PURE__ */ React8.createElement("div", { className: "sm-form-actions" }, /* @__PURE__ */ React8.createElement("button", { type: "button", className: "sm-btn sm-btn-primary", disabled: !(Number(start) > 0), onClick: adopt }, t("live.plan.adopt"))), /* @__PURE__ */ React8.createElement("p", { className: "sm-hint" }, t(initial ? "live.plan.noteExisting" : "live.plan.note"))));
+  return /* @__PURE__ */ React8.createElement("div", { className: "sm-panel" }, /* @__PURE__ */ React8.createElement("section", { className: "sm-card" }, /* @__PURE__ */ React8.createElement("header", { className: "sm-card-head" }, /* @__PURE__ */ React8.createElement("h3", null, t("live.wizard.title"))), /* @__PURE__ */ React8.createElement("p", { className: "sm-hint" }, t("live.wizard.intro")), /* @__PURE__ */ React8.createElement("div", { className: "sm-seg", role: "group", "aria-label": t("live.mode.label") }, ["practice", "normal"].map((m) => /* @__PURE__ */ React8.createElement("button", { key: m, type: "button", className: form.mode === m ? "sm-on" : "", "aria-pressed": form.mode === m, onClick: () => set("mode", m) }, t(`live.mode.${m}`)))), /* @__PURE__ */ React8.createElement("p", { className: "sm-hint" }, t(`live.mode.hint.${form.mode}`)), /* @__PURE__ */ React8.createElement("form", { className: "sm-form-grid", onSubmit: preview }, practice ? /* @__PURE__ */ React8.createElement(Field, { label: t("live.f.practiceAmount"), hint: t("live.f.practiceHint") }, /* @__PURE__ */ React8.createElement("input", { type: "number", min: "1", step: "any", required: true, value: form.practiceAmount, onChange: (e) => set("practiceAmount", e.target.value) })) : /* @__PURE__ */ React8.createElement(React8.Fragment, null, /* @__PURE__ */ React8.createElement(Field, { label: t("live.f.assets"), hint: t("live.f.assetsHint") }, /* @__PURE__ */ React8.createElement("input", { type: "number", min: "0", step: "any", required: true, value: form.assets, onChange: (e) => set("assets", e.target.value) })), /* @__PURE__ */ React8.createElement(Field, { label: t("live.f.expense") }, /* @__PURE__ */ React8.createElement("input", { type: "number", min: "0", step: "any", value: form.monthlyExpense, onChange: (e) => set("monthlyExpense", e.target.value) })), /* @__PURE__ */ React8.createElement(Field, { label: t("live.f.maxLoss"), hint: t("live.f.maxLossHint") }, /* @__PURE__ */ React8.createElement("input", { type: "number", min: "0", step: "any", required: true, value: form.maxLoss, onChange: (e) => set("maxLoss", e.target.value) }))), /* @__PURE__ */ React8.createElement(Field, { label: t("live.f.focus") }, /* @__PURE__ */ React8.createElement("select", { value: form.focus, onChange: (e) => set("focus", e.target.value) }, ["fund", "stock", "both"].map((k) => /* @__PURE__ */ React8.createElement("option", { key: k, value: k }, t(`live.focus.${k}`))))), /* @__PURE__ */ React8.createElement(Field, { label: t("live.f.experience") }, /* @__PURE__ */ React8.createElement("select", { value: form.experience, onChange: (e) => set("experience", e.target.value) }, ["none", "some", "experienced"].map((k) => /* @__PURE__ */ React8.createElement("option", { key: k, value: k }, t(`live.exp.${k}`))))), !practice && /* @__PURE__ */ React8.createElement("label", { className: "sm-check" }, /* @__PURE__ */ React8.createElement("input", { type: "checkbox", checked: form.emergencySaved, onChange: (e) => set("emergencySaved", e.target.checked) }), t("live.f.emergency")), !practice && /* @__PURE__ */ React8.createElement("label", { className: "sm-check" }, /* @__PURE__ */ React8.createElement("input", { type: "checkbox", checked: form.needIncome, onChange: (e) => set("needIncome", e.target.checked) }), t("live.f.income")), /* @__PURE__ */ React8.createElement("div", { className: "sm-form-actions" }, /* @__PURE__ */ React8.createElement("button", { type: "submit", className: "sm-btn sm-btn-primary" }, t("live.wizard.calc")))), error && /* @__PURE__ */ React8.createElement("p", { className: "sm-error", role: "alert" }, errorText(t, error))), plan && /* @__PURE__ */ React8.createElement("section", { className: "sm-card" }, /* @__PURE__ */ React8.createElement("header", { className: "sm-card-head" }, /* @__PURE__ */ React8.createElement("h3", null, t("live.plan.title"))), /* @__PURE__ */ React8.createElement("div", { className: "sm-grid-stats sm-grid-wide" }, plan.mode !== "practice" && /* @__PURE__ */ React8.createElement("div", { className: "sm-stat" }, /* @__PURE__ */ React8.createElement("span", { className: "sm-stat-label" }, t("live.plan.max")), /* @__PURE__ */ React8.createElement("span", { className: "sm-stat-value" }, money(plan.maxCapital))), /* @__PURE__ */ React8.createElement("div", { className: "sm-stat" }, /* @__PURE__ */ React8.createElement("span", { className: "sm-stat-label" }, t("live.plan.start")), /* @__PURE__ */ React8.createElement("span", { className: "sm-stat-value sm-up" }, money(plan.startCapital))), /* @__PURE__ */ React8.createElement("div", { className: "sm-stat" }, /* @__PURE__ */ React8.createElement("span", { className: "sm-stat-label" }, t("live.plan.risk")), /* @__PURE__ */ React8.createElement("span", { className: "sm-stat-value" }, (plan.riskPerTrade * 100).toFixed(2), "%")), /* @__PURE__ */ React8.createElement("div", { className: "sm-stat" }, /* @__PURE__ */ React8.createElement("span", { className: "sm-stat-label" }, t("live.plan.perTrade")), /* @__PURE__ */ React8.createElement("span", { className: "sm-stat-value" }, money(plan.startCapital * plan.riskPerTrade)))), /* @__PURE__ */ React8.createElement("ul", { className: "sm-reasons" }, plan.reasons.map((r, i) => /* @__PURE__ */ React8.createElement("li", { key: i, className: "sm-reason-neutral" }, /* @__PURE__ */ React8.createElement("span", { className: "sm-reason-dot", "aria-hidden": "true" }), t(`live.plan.r.${r.key}`, r.params)))), /* @__PURE__ */ React8.createElement("div", { className: "sm-form-row" }, /* @__PURE__ */ React8.createElement(Field, { label: t("live.plan.adjustStart") }, /* @__PURE__ */ React8.createElement("input", { type: "number", min: "0", step: "any", value: start, onChange: (e) => setStart(e.target.value) })), /* @__PURE__ */ React8.createElement(Field, { label: t("live.plan.adjustRisk") }, /* @__PURE__ */ React8.createElement("select", { value: risk, onChange: (e) => setRisk(e.target.value) }, ["0.0025", "0.005", "0.0075", "0.01", "0.015", "0.02"].map((v) => /* @__PURE__ */ React8.createElement("option", { key: v, value: v }, (Number(v) * 100).toFixed(2), "%"))))), /* @__PURE__ */ React8.createElement("div", { className: "sm-form-actions" }, /* @__PURE__ */ React8.createElement("button", { type: "button", className: "sm-btn sm-btn-primary", disabled: !(Number(start) > 0), onClick: adopt }, t("live.plan.adopt"))), /* @__PURE__ */ React8.createElement("p", { className: "sm-hint" }, t(initial ? "live.plan.noteExisting" : "live.plan.note"))));
 }
 function PlanCard({ t, plan }) {
   if (!plan) return null;
@@ -1703,7 +1909,7 @@ function LivePanel({ t, api: api2, live, error, refresh, onSelect, aiReady, reco
         setRecord(null);
       }
     }
-  ), !record && notice && /* @__PURE__ */ React8.createElement("p", { className: "sm-ok", role: "status" }, notice)), /* @__PURE__ */ React8.createElement("p", { className: "sm-hint" }, t("live.howToRecord")), /* @__PURE__ */ React8.createElement("h4", { className: "sm-subhead" }, t("live.journal.title")), /* @__PURE__ */ React8.createElement(Journal, { t, api: api2, trades: live.trades, mistakes: live.mistakes, refresh }), /* @__PURE__ */ React8.createElement("h4", { className: "sm-subhead" }, t("live.stats.title")), /* @__PURE__ */ React8.createElement(StatsCard, { t, stats: live.stats }), /* @__PURE__ */ React8.createElement(AiReview, { t, api: api2, lessons: live.lessons, stats: live.stats, aiReady, refresh }), /* @__PURE__ */ React8.createElement("h4", { className: "sm-subhead" }, t("live.capital.title")), /* @__PURE__ */ React8.createElement("div", { className: "sm-form-row" }, /* @__PURE__ */ React8.createElement(Field, { label: t("live.capital.amount") }, /* @__PURE__ */ React8.createElement("input", { type: "number", min: "0", step: "1000", value: capital, onChange: (e) => setCapital(e.target.value) })), /* @__PURE__ */ React8.createElement("div", { className: "sm-form-actions" }, /* @__PURE__ */ React8.createElement("button", { type: "button", className: "sm-btn", onClick: () => moveCapital(1) }, t("live.capital.deposit")), /* @__PURE__ */ React8.createElement("button", { type: "button", className: "sm-btn", onClick: () => moveCapital(-1) }, t("live.capital.withdraw")), /* @__PURE__ */ React8.createElement("button", { type: "button", className: "sm-btn sm-btn-ghost", onClick: () => setReplan(true) }, t("live.replan")), /* @__PURE__ */ React8.createElement("button", { type: "button", className: "sm-btn sm-btn-ghost", onClick: async () => {
+  ), !record && notice && /* @__PURE__ */ React8.createElement("p", { className: "sm-ok", role: "status" }, notice)), /* @__PURE__ */ React8.createElement("p", { className: "sm-hint" }, t("live.howToRecord")), /* @__PURE__ */ React8.createElement("h4", { className: "sm-subhead" }, t("live.journal.title")), /* @__PURE__ */ React8.createElement(Journal, { t, api: api2, trades: live.trades, mistakes: live.mistakes, refresh }), /* @__PURE__ */ React8.createElement("h4", { className: "sm-subhead" }, t("live.stats.title")), /* @__PURE__ */ React8.createElement(StatsCard, { t, stats: live.stats }), /* @__PURE__ */ React8.createElement(AiReview, { t, api: api2, lessons: live.lessons, stats: live.stats, aiReady, refresh }), /* @__PURE__ */ React8.createElement("h4", { className: "sm-subhead" }, t("live.capital.title")), /* @__PURE__ */ React8.createElement("div", { className: "sm-form-row" }, /* @__PURE__ */ React8.createElement(Field, { label: t("live.capital.amount") }, /* @__PURE__ */ React8.createElement("input", { type: "number", min: "0", step: "any", value: capital, onChange: (e) => setCapital(e.target.value) })), /* @__PURE__ */ React8.createElement("div", { className: "sm-form-actions" }, /* @__PURE__ */ React8.createElement("button", { type: "button", className: "sm-btn", onClick: () => moveCapital(1) }, t("live.capital.deposit")), /* @__PURE__ */ React8.createElement("button", { type: "button", className: "sm-btn", onClick: () => moveCapital(-1) }, t("live.capital.withdraw")), /* @__PURE__ */ React8.createElement("button", { type: "button", className: "sm-btn sm-btn-ghost", onClick: () => setReplan(true) }, t("live.replan")), /* @__PURE__ */ React8.createElement("button", { type: "button", className: "sm-btn sm-btn-ghost", onClick: async () => {
     if (window.confirm(t("live.resetConfirm"))) {
       await api2.liveReset().catch(() => {
       });
@@ -1796,7 +2002,7 @@ function SearchBox({ t, api: api2, onSelect }) {
   } }, /* @__PURE__ */ React9.createElement("span", null, r.name), /* @__PURE__ */ React9.createElement("span", { className: "sm-muted" }, r.code), /* @__PURE__ */ React9.createElement("span", { className: "sm-tag" }, r.type)))));
 }
 var TABS = ["market", "watch", "live", "paper", "screen", "alerts", "advisor"];
-var CLIENT_VERSION = true ? "0.6.5" : "dev";
+var CLIENT_VERSION = true ? "0.7.0" : "dev";
 var Boundary = class extends React9.Component {
   constructor(props) {
     super(props);
@@ -2038,6 +2244,22 @@ var zhLive = {
   "live.privacy": "隐私：金额和股数只保存在本机。AI 复盘和对话只拿到比例、R 倍数和价格，看不到你有多少钱。",
   "live.wizard.title": "第一步：定一个起步资金",
   "live.wizard.intro": '先回答几个问题。规则是"只用亏得起的钱"：按你能承受的最大亏损倒推交易资金上限，再先拿其中一小部分试用，证明自己能按计划执行、而且期望值为正之后再加大。',
+  "live.mode.label": "规划方式",
+  "live.mode.practice": "小钱练手",
+  "live.mode.normal": "按资产规划",
+  "live.mode.hint.practice": "只拿一笔亏光也没关系的小钱来练习按规则交易，几百元也可以。重点是练习按计划执行和记录，不是赚多少钱。",
+  "live.mode.hint.normal": "按你的可投资资产和能承受的最大亏损，算出交易资金上限和建议的起步资金。",
+  "live.f.practiceAmount": "练手金额（元）",
+  "live.f.practiceHint": "这笔钱亏光也不影响生活",
+  "live.f.focus": "主要想做",
+  "live.focus.fund": "场外基金",
+  "live.focus.stock": "股票和场内 ETF",
+  "live.focus.both": "都有",
+  "live.plan.r.practice": "专门练手的 {amount} 元全部作为起步资金，单笔风险 {risk}%。先练满 {trades} 笔、确认能按计划执行并且期望值为正，再考虑加钱",
+  "live.plan.r.smallFund": "{amount} 元做场外基金没问题：多数基金 10 元起购（部分平台 1 元），申购费按比例收。优先选费率低的指数基金或 C 类份额；持有不满 7 天卖出要付 1.5% 赎回费",
+  "live.plan.r.smallStock": "{amount} 元做股票和 ETF 比较吃力：每笔最低佣金约 5 元，一两百元的交易来回手续费就占好几个百分点（除非券商免五）；高价股按风险算常常买不到一手。小钱更适合场外基金，或在免五的券商做低价 ETF",
+  "live.plan.r.smallBoth": "{amount} 元建议以场外基金为主：基金 10 元起购、费用按比例收；股票和 ETF 每笔最低佣金约 5 元，小额交易的手续费占比很高（除非券商免五）",
+  "live.check.feeHeavy": "这笔买卖来回手续费约占 {pct}%（每笔最低佣金 5 元）：金额太小会被手续费吃掉，可以改做场外基金，或在免五的券商交易",
   "live.f.assets": "可投资资产（元）",
   "live.f.assetsHint": "存款、理财等可以动用的钱，不含房产和生活必需",
   "live.f.expense": "每月生活支出（元）",
@@ -2221,6 +2443,22 @@ var enLive = {
   "live.privacy": "Privacy: amounts and share counts stay on this computer. The AI review and chat only see ratios, R multiples and prices.",
   "live.wizard.title": "Step 1: choose a starting stake",
   "live.wizard.intro": 'Answer a few questions. The rule is "only trade money you can afford to lose": the maximum loss you can take sets the capital ceiling, and you start with part of it until you show that you follow your plan and have a positive expectancy.',
+  "live.mode.label": "Planning mode",
+  "live.mode.practice": "Practice with a small sum",
+  "live.mode.normal": "Plan from assets",
+  "live.mode.hint.practice": "Use a small sum you can afford to lose entirely, even a few hundred yuan, to practise trading by the rules. The goal is disciplined execution and record keeping, not profit.",
+  "live.mode.hint.normal": "Work out a capital ceiling and a starting stake from your investable assets and the largest loss you can bear.",
+  "live.f.practiceAmount": "Practice amount",
+  "live.f.practiceHint": "Losing it all would not affect your life",
+  "live.f.focus": "Mainly trading",
+  "live.focus.fund": "Mutual funds",
+  "live.focus.stock": "Stocks and listed ETFs",
+  "live.focus.both": "Both",
+  "live.plan.r.practice": "The {amount} practice sum is your whole starting stake, with {risk}% risk per trade. Complete {trades} trades, confirm you follow the plan with a positive expectancy, then consider adding money",
+  "live.plan.r.smallFund": "{amount} works for mutual funds: most start at 10 yuan (some platforms 1 yuan) and fees are proportional. Prefer low-fee index funds or class C units; redeeming within 7 days costs 1.5%",
+  "live.plan.r.smallStock": "{amount} is tight for stocks and ETFs: the minimum commission is about 5 yuan per trade, so a round trip on a 100–200 yuan trade costs several percent (unless your broker waives it), and pricier stocks often fall below one lot. Small sums suit mutual funds, or low-priced ETFs at a broker without the minimum",
+  "live.plan.r.smallBoth": "With {amount}, focus on mutual funds: they start at 10 yuan with proportional fees; stocks and ETFs carry a minimum commission of about 5 yuan per trade, which is costly on small trades (unless your broker waives it)",
+  "live.check.feeHeavy": "The round-trip fees on this trade are about {pct}% (5 yuan minimum commission per trade): small trades get eaten by fees; consider mutual funds or a broker without the minimum",
   "live.f.assets": "Investable assets",
   "live.f.assetsHint": "Savings you could use, excluding your home and living needs",
   "live.f.expense": "Monthly living expenses",
@@ -2710,6 +2948,12 @@ var zhUi = {
   "screen.similar": "同类还有 {n} 只：{names}…",
   "screen.grouped": "，合并成 {n} 组",
   "screen.note": '规则选股只说明"符合这条规则"，不代表会上涨。成交额门槛：股票 1–2 亿、ETF 5000 万；排除 ST 与退市股。',
+  "advisor.attach": "附加截图或文件",
+  "advisor.attachTip": "附加截图或文本文件（也可以直接粘贴截图，或把文件拖进来）",
+  "advisor.attachPrivacy": "截图和文件会原样发给模型：里面的金额、账号等信息模型也会看到，介意的话先打码。",
+  "advisor.attachDefaultQ": "请看看我附上的内容，结合当前数据给出分析和建议。",
+  "advisor.attachChars": "{n} 字",
+  "advisor.attachRemove": "移除 {name}",
   "advisor.modelLabel": "模型",
   "advisor.reasoningLabel": "推理强度",
   "advisor.modelDefault": "插件默认（{model}）",
@@ -2780,6 +3024,15 @@ var zhUi = {
   "err.ai.unavailable": "AI 服务不可用：请确认 DSH 已登录 DeepSeek 账号",
   "err.ai.badModel": "这个模型现在不可用：{model}",
   "err.ai.badReasoning": "这个模型不支持推理强度 {reasoning}",
+  "err.ai.noImageModel": "当前模型 {model} 不能看图片：请在上方「模型」里换一个支持图片的模型（例如 DeepSeek-V4.1-Flash）",
+  "err.ai.noAttachments": "这个 DSH 没有启用图片附件服务，暂时不能发送截图",
+  "err.ai.imageRejected": "图片没能保存：{message}",
+  "err.ai.badImage": "这张图片读不了或太大：{name}",
+  "err.ai.tooManyImages": "一次最多附 {max} 张图片",
+  "err.ai.tooManyFiles": "一次最多附 {max} 个文件",
+  "err.ai.filesTooLarge": "附上的文件内容太多（最多约 {max} 字），请删掉一些或只保留需要的部分",
+  "err.ai.unsupportedFile": "暂时读不了「{name}」：Excel、PDF、Word 请另存为 CSV/TXT，或者截图后再发",
+  "err.ai.fileTooLarge": "文件「{name}」太大（最多 {max}）",
   "err.ai.emptyQuestion": "请输入问题",
   "err.ai.failed": "AI 回答失败：{message}",
   "err.request.tooLarge": "请求内容太大",
@@ -3096,6 +3349,12 @@ var enUi = {
   "screen.similar": "{n} near-identical: {names}…",
   "screen.grouped": ", grouped into {n}",
   "screen.note": "A match only means the rule is satisfied, not that the price will rise. Turnover floor: ¥100–200M for stocks, ¥50M for ETFs; ST and delisting stocks excluded.",
+  "advisor.attach": "Attach a screenshot or file",
+  "advisor.attachTip": "Attach screenshots or text files (you can also paste a screenshot or drop files here)",
+  "advisor.attachPrivacy": "Screenshots and files are sent to the model as they are, including any amounts or account details; blur them first if needed.",
+  "advisor.attachDefaultQ": "Please look at what I attached and give an analysis and advice using the current data.",
+  "advisor.attachChars": "{n} chars",
+  "advisor.attachRemove": "Remove {name}",
   "advisor.modelLabel": "Model",
   "advisor.reasoningLabel": "Reasoning",
   "advisor.modelDefault": "Plugin default ({model})",
@@ -3166,6 +3425,15 @@ var enUi = {
   "err.ai.unavailable": "AI is unavailable: make sure DSH is signed in to DeepSeek",
   "err.ai.badModel": "This model is not available: {model}",
   "err.ai.badReasoning": "This model does not support reasoning level {reasoning}",
+  "err.ai.noImageModel": "The current model {model} cannot read images; choose a model with image support above (for example DeepSeek-V4.1-Flash)",
+  "err.ai.noAttachments": "This DSH has no image attachment service, so screenshots cannot be sent",
+  "err.ai.imageRejected": "The image could not be saved: {message}",
+  "err.ai.badImage": "This image cannot be read or is too large: {name}",
+  "err.ai.tooManyImages": "Attach at most {max} images at a time",
+  "err.ai.tooManyFiles": "Attach at most {max} files at a time",
+  "err.ai.filesTooLarge": "The attached files are too long (about {max} characters at most); remove some content",
+  "err.ai.unsupportedFile": 'Cannot read "{name}" yet: save Excel, PDF or Word files as CSV/TXT, or send a screenshot',
+  "err.ai.fileTooLarge": 'File "{name}" is too large (max {max})',
   "err.ai.emptyQuestion": "Enter a question",
   "err.ai.failed": "The AI answer failed: {message}",
   "err.request.tooLarge": "Request too large",
