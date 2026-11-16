@@ -4,7 +4,8 @@
 # 配置项（可在 profile 的 cordis.patch.yml 里按 id 覆盖，覆盖时需写完整 config）：
 #   provider / model     AI 顾问使用的模型路由，默认 deepseek-account / deepseek-flash
 #   maxTokens            单次回答上限，默认 4096
-#   reasoning            auto（模型默认）或 low（最低推理强度，回答更快）
+#   model                例如 deepseek-flash（默认，V4.1 Flash）或 deepseek-v4-pro（更强、更贵）
+#   reasoning            auto（用 DeepSeek 路由的默认强度）或 off / low / high / max
 #   initialCash          模拟盘初始资金，默认 1000000
 #   riskPct              头寸单位的风险比例，默认 0.01（1%）
 #   tickSeconds          提醒与限价单检查间隔，默认 20 秒

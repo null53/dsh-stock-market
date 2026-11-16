@@ -978,6 +978,8 @@ function AdvisorChat({ t, api: api2, symbol, kind, title, startSession, aiReady,
   const [messages, setMessages] = React4.useState([]);
   const [draft, setDraft] = React4.useState("");
   const [busy, setBusy] = React4.useState(false);
+  const [meta] = usePoll(() => api2.meta(), 3e5, []);
+  const model = meta?.model;
   const [error, setError] = React4.useState(null);
   const controllerRef = React4.useRef(null);
   const listRef = React4.useRef(null);
@@ -1052,7 +1054,7 @@ function AdvisorChat({ t, api: api2, symbol, kind, title, startSession, aiReady,
     const q = draft.trim() || [...messages].reverse().find((m) => m.role === "user")?.text || t("quick.canBuy");
     if (startSession(t("advisor.sessionPrompt", { title, symbol, question: q })) === false) setError({ code: "session.unavailable" });
   };
-  return /* @__PURE__ */ React4.createElement("section", { ref: sectionRef, className: "sm-card sm-advisor", "aria-label": t("advisor.title") }, /* @__PURE__ */ React4.createElement("header", { className: "sm-card-head" }, /* @__PURE__ */ React4.createElement("h3", null, t("advisor.title")), /* @__PURE__ */ React4.createElement("span", { className: "sm-muted" }, t("advisor.subtitle")), /* @__PURE__ */ React4.createElement("span", { className: "sm-grow" }), startSession && /* @__PURE__ */ React4.createElement("button", { type: "button", className: "sm-btn sm-btn-ghost", onClick: toSession }, t("advisor.toSession")), messages.length > 0 && /* @__PURE__ */ React4.createElement("button", { type: "button", className: "sm-btn sm-btn-ghost", onClick: clear }, t("advisor.clear"))), !aiReady && /* @__PURE__ */ React4.createElement("p", { className: "sm-notice" }, t("advisor.unavailable")), /* @__PURE__ */ React4.createElement("div", { className: "sm-chat", ref: listRef }, messages.length === 0 && /* @__PURE__ */ React4.createElement("p", { className: "sm-muted sm-chat-empty" }, t("advisor.empty")), messages.map((m, i) => /* @__PURE__ */ React4.createElement("div", { key: i, className: `sm-msg sm-msg-${m.role}` }, m.role === "user" ? /* @__PURE__ */ React4.createElement("p", null, m.text) : /* @__PURE__ */ React4.createElement(React4.Fragment, null, m.text === "" && m.pending ? /* @__PURE__ */ React4.createElement("p", { className: "sm-muted" }, m.thinking ? t("advisor.thinking") : m.status?.key === "screening" ? t("advisor.status.screening", { presets: (m.status.params?.presets ?? []).map((p) => t(`screen.${p}`)).join("、") }) : t("advisor.waiting")) : /* @__PURE__ */ React4.createElement(Markdown, { text: m.text }), m.sources?.length > 0 && /* @__PURE__ */ React4.createElement("details", { className: "sm-sources" }, /* @__PURE__ */ React4.createElement("summary", null, t("advisor.sources", { n: m.sources.length })), /* @__PURE__ */ React4.createElement("ul", null, m.sources.map((s) => /* @__PURE__ */ React4.createElement("li", { key: s }, s)))), !m.pending && /* @__PURE__ */ React4.createElement("div", { className: "sm-msg-meta" }, timeOf(m.at)))))), error && /* @__PURE__ */ React4.createElement("p", { className: "sm-error", role: "alert" }, errorText(t, error)), /* @__PURE__ */ React4.createElement("div", { className: "sm-quick" }, (QUICK[kind] ?? QUICK.security).map((key) => /* @__PURE__ */ React4.createElement("button", { key, type: "button", className: "sm-chip", disabled: busy || !aiReady, onClick: () => ask(t(key)) }, t(key)))), /* @__PURE__ */ React4.createElement("form", { className: "sm-chat-input", onSubmit: (e) => {
+  return /* @__PURE__ */ React4.createElement("section", { ref: sectionRef, className: "sm-card sm-advisor", "aria-label": t("advisor.title") }, /* @__PURE__ */ React4.createElement("header", { className: "sm-card-head" }, /* @__PURE__ */ React4.createElement("h3", null, t("advisor.title")), /* @__PURE__ */ React4.createElement("span", { className: "sm-muted" }, t("advisor.subtitle")), model && /* @__PURE__ */ React4.createElement("span", { className: "sm-muted sm-small", title: model.provider }, t("advisor.model", { model: model.model, reasoning: model.reasoning === "auto" ? t("advisor.reasoningAuto") : model.reasoning })), /* @__PURE__ */ React4.createElement("span", { className: "sm-grow" }), startSession && /* @__PURE__ */ React4.createElement("button", { type: "button", className: "sm-btn sm-btn-ghost", onClick: toSession }, t("advisor.toSession")), messages.length > 0 && /* @__PURE__ */ React4.createElement("button", { type: "button", className: "sm-btn sm-btn-ghost", onClick: clear }, t("advisor.clear"))), !aiReady && /* @__PURE__ */ React4.createElement("p", { className: "sm-notice" }, t("advisor.unavailable")), /* @__PURE__ */ React4.createElement("div", { className: "sm-chat", ref: listRef }, messages.length === 0 && /* @__PURE__ */ React4.createElement("p", { className: "sm-muted sm-chat-empty" }, t("advisor.empty")), messages.map((m, i) => /* @__PURE__ */ React4.createElement("div", { key: i, className: `sm-msg sm-msg-${m.role}` }, m.role === "user" ? /* @__PURE__ */ React4.createElement("p", null, m.text) : /* @__PURE__ */ React4.createElement(React4.Fragment, null, m.text === "" && m.pending ? /* @__PURE__ */ React4.createElement("p", { className: "sm-muted" }, m.thinking ? t("advisor.thinking") : m.status?.key === "screening" ? t("advisor.status.screening", { presets: (m.status.params?.presets ?? []).map((p) => t(`screen.${p}`)).join("、") }) : t("advisor.waiting")) : /* @__PURE__ */ React4.createElement(Markdown, { text: m.text }), m.sources?.length > 0 && /* @__PURE__ */ React4.createElement("details", { className: "sm-sources" }, /* @__PURE__ */ React4.createElement("summary", null, t("advisor.sources", { n: m.sources.length })), /* @__PURE__ */ React4.createElement("ul", null, m.sources.map((s) => /* @__PURE__ */ React4.createElement("li", { key: s }, s)))), !m.pending && /* @__PURE__ */ React4.createElement("div", { className: "sm-msg-meta" }, timeOf(m.at)))))), error && /* @__PURE__ */ React4.createElement("p", { className: "sm-error", role: "alert" }, errorText(t, error)), /* @__PURE__ */ React4.createElement("div", { className: "sm-quick" }, (QUICK[kind] ?? QUICK.security).map((key) => /* @__PURE__ */ React4.createElement("button", { key, type: "button", className: "sm-chip", disabled: busy || !aiReady, onClick: () => ask(t(key)) }, t(key)))), /* @__PURE__ */ React4.createElement("form", { className: "sm-chat-input", onSubmit: (e) => {
     e.preventDefault();
     ask(draft);
   } }, /* @__PURE__ */ React4.createElement(
@@ -1726,7 +1728,7 @@ function SearchBox({ t, api: api2, onSelect }) {
   } }, /* @__PURE__ */ React9.createElement("span", null, r.name), /* @__PURE__ */ React9.createElement("span", { className: "sm-muted" }, r.code), /* @__PURE__ */ React9.createElement("span", { className: "sm-tag" }, r.type)))));
 }
 var TABS = ["market", "watch", "live", "paper", "screen", "alerts", "advisor"];
-var CLIENT_VERSION = true ? "0.6.2" : "dev";
+var CLIENT_VERSION = true ? "0.6.3" : "dev";
 var Boundary = class extends React9.Component {
   constructor(props) {
     super(props);
@@ -2640,6 +2642,8 @@ var zhUi = {
   "screen.similar": "同类还有 {n} 只：{names}…",
   "screen.grouped": "，合并成 {n} 组",
   "screen.note": '规则选股只说明"符合这条规则"，不代表会上涨。成交额门槛：股票 1–2 亿、ETF 5000 万；排除 ST 与退市股。',
+  "advisor.model": "模型 {model} · 推理强度 {reasoning}",
+  "advisor.reasoningAuto": "默认",
   "advisor.title": "AI 顾问",
   "advisor.general": "整体市场与我的模拟盘",
   "advisor.toSession": "转到 DSH 对话",
@@ -3017,6 +3021,8 @@ var enUi = {
   "screen.similar": "{n} near-identical: {names}…",
   "screen.grouped": ", grouped into {n}",
   "screen.note": "A match only means the rule is satisfied, not that the price will rise. Turnover floor: ¥100–200M for stocks, ¥50M for ETFs; ST and delisting stocks excluded.",
+  "advisor.model": "Model {model} · reasoning {reasoning}",
+  "advisor.reasoningAuto": "default",
   "advisor.title": "AI advisor",
   "advisor.general": "Overall market and my paper account",
   "advisor.toSession": "Continue in a DSH session",

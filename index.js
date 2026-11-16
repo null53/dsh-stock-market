@@ -2213,14 +2213,26 @@ function setTodo(state, id, action) {
   if (keys.length > 500) for (const k of keys.slice(0, keys.length - 500)) delete state.todoState[k];
   return { ok: true };
 }
+function guardStatus(plan, summary) {
+  const notes = [];
+  if (summary.drawdown <= -plan.pauseAt * 100) notes.push(`回撤已到暂停线（${plan.pauseAt * 100}%），不应开新仓`);
+  else if (summary.drawdown <= -plan.reduceAt * 100) notes.push(`回撤已到减仓线（${plan.reduceAt * 100}%），新仓位按八成`);
+  const roomPct = round(plan.maxOpenRisk * 100 - summary.openRiskPct, 2);
+  if (roomPct <= plan.riskPerTrade * 100) notes.push(`总持仓风险 ${summary.openRiskPct}% 已接近上限 ${plan.maxOpenRisk * 100}%，再开一笔会超限`);
+  else notes.push(`总持仓风险还可增加 ${roomPct}%（约 ${Math.floor(roomPct / (plan.riskPerTrade * 100))} 笔新仓）`);
+  const held = summary.positions.length;
+  notes.push(held >= plan.maxPositions ? `持仓已满（${held}/${plan.maxPositions} 只），不应再开新仓` : `持仓 ${held}/${plan.maxPositions} 只`);
+  return notes.join("；");
+}
 function liveForAi(state, summary, stats) {
   const lines = ["## 用户的实盘（已脱敏：只有比例、R 倍数和价格，没有金额和股数）"];
   const plan = state.plan;
   if (!plan) return `${lines[0]}
-用户还没有制定实盘资金计划。`;
+用户还没有制定实盘资金计划：涉及真钱时先建议在"实盘"页定好起步资金和单笔风险，不给实盘的具体仓位。`;
   lines.push(
     `阶段：${plan.stage === "trial" ? `试用期（前 ${plan.trialTrades} 笔交易）` : "正常"}；单笔风险 ${round(plan.riskPerTrade * 100, 2)}%；总持仓风险上限 ${plan.maxOpenRisk * 100}%；回撤 ${plan.reduceAt * 100}% 时缩小规模、${plan.pauseAt * 100}% 时暂停复盘`,
-    `账户：相对入金 ${summary.totalPnlPct ?? 0}%；距高点回撤 ${summary.drawdown}%；所有持仓打到止损的总风险占权益 ${summary.openRiskPct}%；现金占比 ${summary.equity > 0 ? round(summary.cash / summary.equity * 100, 1) : 100}%`
+    `账户：相对入金 ${summary.totalPnlPct ?? 0}%；距高点回撤 ${summary.drawdown}%；所有持仓打到止损的总风险占权益 ${summary.openRiskPct}%；现金占比 ${summary.equity > 0 ? round(summary.cash / summary.equity * 100, 1) : 100}%`,
+    `护栏状态：${guardStatus(plan, summary)}`
   );
   if (summary.positions.length > 0) {
     lines.push("### 当前实盘持仓");
@@ -2570,7 +2582,7 @@ ${TEXT.roleSource}
    - 依据：${TEXT.roleBasis}
    - 入场条件：现价买，还是等收盘突破某个价位再买；
    - 止损位：默认用 2N 止损（数据里给了 N），也可以用结构位，必须写出具体价格；
-   - 仓位：${TEXT.roleSizing}
+   - 仓位：${TEXT.roleSizing}这里的股数和权益来自模拟盘，只适用于模拟盘；真实资金按第 10 条处理；
    - 失效条件：出现什么情况这个判断作废；
    - 最后一句风险提示。
 3. 只使用提供的数据，不编造价格、财报、新闻。数据里没有基本面信息；涉及基本面时说明这超出了现有数据。
@@ -2579,8 +2591,15 @@ ${TEXT.roleSource}
 6. 注意 A 股约束：T+1、100 股一手（科创板 200 股起）、涨跌停、多数股票不能做空。场外基金按当天 15:00 后公布的净值申赎，没有盘中价格：用收盘净值判断信号，止损放在 3N（比股票多 1N 应对次日成交的滞后），持有不满 7 天赎回要付 1.5% 赎回费。不要因为没有盘中价就把场外基金排除在外，用户问基金时场外基金和 ETF 都要考虑。
 7. 数据里会附上近期新闻、公告与事件。解释涨跌原因时引用具体条目（时间 + 标题），分清"直接原因"和"可能相关"；没有抓到相关消息时如实说明，不要编造新闻。
 8. 用户问"买哪些、推荐哪只"时，数据里会附上规则选股的候选清单：从清单里挑 3～5 只，逐只写出入选理由、入场方式、止损和仓位，并说明候选之间是否高度相关（同一指数或同一行业只选一只）。清单为空或没跑完时如实说明，并建议用户在"选股"页重新运行，不要编造代码。
-9. 默认 600 字以内，用户要求详细时可以展开。可以用 Markdown 的标题、列表和表格。${TEXT.roleExtra ? `
-10. ${TEXT.roleExtra}` : ""}`;
+9. 默认 600 字以内，用户要求详细时可以展开。可以用 Markdown 的标题、列表和表格。
+10. 真实资金要格外谨慎。数据里附有"用户的实盘"（已脱敏，只有比例、R 倍数和价格）以及个人交易规则，回答前先看：
+   - 用户还没有制定实盘资金计划时，可以照常分析并给出倾向，但涉及真钱时先建议在"实盘"页定好起步资金和单笔风险（或先用模拟盘练习），不给实盘的具体仓位；
+   - 账户回撤已到暂停线时，建议暂停开新仓、先复盘；到了减仓线时，新仓位按八成计算；总持仓风险接近上限或持仓数已满时，不建议再开新仓，可以建议先处理现有持仓；
+   - 实盘仓位只用比例表达：按实盘的单笔风险比例，写出止损价、打到止损约亏实盘权益的百分比、仓位约占实盘权益的百分比；具体股数或申购金额请用户在这只证券详情里点"记录实盘"看计划单（你看不到金额，不要自己编股数）；
+   - 用户已经实盘持有这只时，先根据它的止损、浮动 R 和退出信号回答持有、加仓还是卖出；
+   - 个人交易规则与当前建议冲突时，按个人规则执行并指出冲突；
+   - 没有规则信号支持时只能给观望，不要因为用户想买就降低标准；不承诺收益，提醒只用亏得起的钱。${TEXT.roleExtra ? `
+11. ${TEXT.roleExtra}` : ""}`;
 var fmt = (v, digits = 2) => v === null || v === void 0 || Number.isNaN(v) ? "—" : typeof v === "number" ? Number(v.toFixed(digits)).toString() : String(v);
 var yi = (v) => v === null || v === void 0 ? "—" : `${(v / 1e8).toFixed(2)} 亿`;
 var pct = (v) => v === null || v === void 0 ? "—" : `${v > 0 ? "+" : ""}${fmt(v)}%`;
@@ -2789,16 +2808,17 @@ ${history}`);
 ${question}`);
   return parts.join("\n\n---\n\n");
 }
+function pickReasoningEffort(reasoning, efforts) {
+  if (!reasoning || reasoning === "auto") return void 0;
+  return efforts.includes(reasoning) ? reasoning : void 0;
+}
 async function streamAnswer(llm, { provider, model, maxTokens, reasoning, system, user, signal, onDelta, onThinking }) {
   const messages = [{ role: "user", content: [{ type: "text", text: user }] }];
   let stream;
   if (typeof llm.prepareCall === "function") {
     const call = await llm.prepareCall({ provider, model, maxTokens }, signal, (controls, info) => {
-      if (reasoning === "low") {
-        const first = info?.reasoning?.efforts?.[0]?.id;
-        return first === void 0 ? controls : { ...controls, reasoningEffort: first };
-      }
-      return controls;
+      const effort = pickReasoningEffort(reasoning, (info?.reasoning?.efforts ?? []).map((e) => e.id));
+      return effort === void 0 ? controls : { ...controls, reasoningEffort: effort };
     });
     stream = call.stream({ ...call.config, system, messages, signal });
   } else {
@@ -3750,7 +3770,7 @@ async function createMarketService({ store, knowledge, getLlm, config, log }) {
     return liveView();
   }
   async function liveContextText() {
-    if (!liveState.plan) return "";
+    if (!liveState.plan) return liveForAi(liveState, null, null);
     const { summary } = await liveSnapshot();
     const text2 = liveForAi(liveState, summary, liveStats(liveState));
     const lessons = liveState.lessons?.text ? `
@@ -3908,6 +3928,7 @@ ${liveState.lessons.text}` : "";
     liveContextText,
     knowledgeSearch,
     updateInfo,
+    modelInfo: () => ({ provider: config.provider, model: config.model, reasoning: config.reasoning ?? "auto" }),
     knowledgeInfo: () => ({ dir: knowledge.dir, sections: knowledge.sections, liteChars: knowledge.lite.length }),
     sourceStatus: () => status(),
     aiReady: () => getLlm() !== void 0
@@ -3916,7 +3937,7 @@ ${liveState.lessons.text}` : "";
 
 // src/host/routes.js
 var API_PATH = "/stock-market/api";
-var VERSION = true ? "0.6.2" : "dev";
+var VERSION = true ? "0.6.3" : "dev";
 var MAX_BODY = 256 * 1024;
 function sendJson(res, status2, body) {
   res.statusCode = status2;
@@ -4024,7 +4045,8 @@ function registerRoutes(ctx, ready, log) {
               presets: service.presets(),
               ai: service.aiReady(),
               knowledge: service.knowledgeInfo(),
-              update: service.updateInfo()
+              update: service.updateInfo(),
+              model: service.modelInfo()
             });
           case "indices":
             return sendJson(res, 200, await service.indices());
