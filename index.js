@@ -983,6 +983,21 @@ async function fundDetail(code) {
   if (!text2.includes("fS_code")) throw new Error(`找不到基金 ${code}`);
   return parsePingzhong(text2, code);
 }
+function parseLatestNavs(json2) {
+  const rows = json2?.Data?.LSJZList ?? [];
+  return rows.map((r) => ({ date: String(r.FSRQ ?? "").slice(0, 10), nav: num(r.DWJZ), pct: num(r.JZZZL) })).filter((r) => /^\d{4}-\d{2}-\d{2}$/.test(r.date) && r.nav !== null && r.nav > 0).sort((a, b) => a.date < b.date ? -1 : 1);
+}
+async function fundLatestNavs(code, size = 20) {
+  if (!/^\d{6}$/.test(code)) return [];
+  const params = new URLSearchParams({ fundCode: code, pageIndex: "1", pageSize: String(size) });
+  return parseLatestNavs(await fetchJson(`https://api.fund.eastmoney.com/f10/lsjz?${params}`, { referer: "https://fundf10.eastmoney.com/" }));
+}
+function mergeNavs(history, latest) {
+  if (!latest?.length) return history;
+  const byDate = new Map(history.map((p) => [p.date, p]));
+  for (const p of latest) byDate.set(p.date, { ...byDate.get(p.date), ...p });
+  return [...byDate.values()].sort((a, b) => a.date < b.date ? -1 : 1);
+}
 async function fundHoldings(code) {
   try {
     const params = new URLSearchParams({ FCODE: code, deviceid: "Wap", plat: "Wap", product: "EFund", version: "2.0.0" });
@@ -1913,7 +1928,7 @@ function checkStops(state, positions, quoteOf, today2) {
     if (pos.stop === null || pos.stop === void 0) continue;
     const quote3 = quoteOf(pos.secid);
     if (quote3 === void 0 || !(quote3.price > 0) || quote3.price > pos.stop) continue;
-    const dup = state.events.some((e) => e.kind === "stop" && e.symbol === pos.secid && e.at.slice(0, 10) === today2);
+    const dup = state.events.some((e) => e.kind === "stop" && e.symbol === pos.secid && (e.day ?? beijingDate(new Date(e.at))) === today2);
     if (dup) continue;
     fired.push(pushEvent(state, {
       kind: "stop",
@@ -1923,7 +1938,8 @@ function checkStops(state, positions, quoteOf, today2) {
       type: "paperStop",
       value: pos.stop,
       price: quote3.price,
-      pct: quote3.pct
+      pct: quote3.pct,
+      day: today2
     }));
   }
   return fired;
@@ -3543,7 +3559,12 @@ async function createMarketService({ store, knowledge, getLlm, getAttachments = 
     });
   }
   async function fund(code) {
-    const detail = await cache.get(`fund:${code}`, 6e5, () => fundDetail(code));
+    const base = await cache.get(`fund:${code}`, 6e5, () => fundDetail(code));
+    const latest = await cache.get(`fundnav:${code}`, 18e4, () => fundLatestNavs(code)).catch((error) => {
+      log.debug(`读取 ${code} 最近净值失败`, error);
+      return [];
+    });
+    const detail = { ...base, navs: mergeNavs(base.navs, latest) };
     const holdings = await cache.get(`fundhold:${code}`, 36e5, async () => {
       const rows = await fundHoldings(code);
       if (rows.length > 0 || detail.holdingSecids.length === 0) return rows;
@@ -4499,7 +4520,7 @@ ${liveState.lessons.text}` : "";
 
 // src/host/routes.js
 var API_PATH = "/stock-market/api";
-var VERSION = true ? "0.9.0" : "dev";
+var VERSION = true ? "0.9.1" : "dev";
 var MAX_BODY = 256 * 1024;
 var MAX_CHAT_BODY = 24 * 1024 * 1024;
 function sendJson(res, status2, body) {

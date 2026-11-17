@@ -1557,7 +1557,7 @@ var NAV_RANGES = { y1: 250, y3: 750, all: Infinity };
 function FundDetail({ t, api: api2, symbol, watched, onToggleWatch, onRecordLive, startSession, aiReady }) {
   const code = symbol.slice(5);
   const [range, setRange] = React6.useState("y1");
-  const [fund, err] = usePoll((signal) => api2.fund(code, signal), 6e5, [code]);
+  const [fund, err] = usePoll((signal) => api2.fund(code, signal), 3e5, [code]);
   const [news, newsErr] = usePoll((signal) => api2.news(symbol, signal), 6e5, [symbol]);
   if (err && !fund) return /* @__PURE__ */ React6.createElement("section", { className: "sm-card" }, /* @__PURE__ */ React6.createElement("p", { className: "sm-error" }, errorText(t, err)));
   if (!fund) return /* @__PURE__ */ React6.createElement("section", { className: "sm-card" }, /* @__PURE__ */ React6.createElement("p", { className: "sm-muted" }, t("common.loading")));
@@ -2085,7 +2085,7 @@ function SearchBox({ t, api: api2, onSelect }) {
   } }, /* @__PURE__ */ React9.createElement("span", null, r.name), /* @__PURE__ */ React9.createElement("span", { className: "sm-muted" }, r.code), /* @__PURE__ */ React9.createElement("span", { className: "sm-tag" }, r.type)))));
 }
 var TABS = ["market", "watch", "live", "paper", "screen", "alerts", "advisor"];
-var CLIENT_VERSION = true ? "0.9.0" : "dev";
+var CLIENT_VERSION = true ? "0.9.1" : "dev";
 var Boundary = class extends React9.Component {
   constructor(props) {
     super(props);
